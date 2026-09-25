@@ -944,3 +944,80 @@ Every implementation decision should reinforce this:
 > **Bob is the coding intelligence. Repo2Prod is the execution-and-verification loop that takes Bob's changes all the way to a proven local runtime.**
 
 If a proposed feature does not strengthen that statement, treat it as a stretch feature.
+
+---
+
+# 27. Developer quick-reference (agent productivity)
+
+> This section was added for AI coding agents. Everything above is the product/design specification and governs scope, Bob integration rules, and ownership boundaries. Read sections 1–26 before making architectural decisions.
+
+## Build & compile
+
+```bash
+pnpm run compile        # tsc -p . → out/
+pnpm run watch          # tsc -w -p . (incremental)
+pnpm run package        # vsce package → *.vsix
+```
+
+**There is no test runner configured yet.** `package.json` has no `test` script. Add Vitest or Mocha before writing tests (see §17 for priorities).
+
+## Run a single test (once configured)
+
+When a test runner is added, tests should be co-located with source (follow the project's Vitest convention if/when adopted). Until then:
+
+```bash
+pnpm exec tsc --noEmit   # type-check only
+```
+
+## Key facts from config files
+
+- **Package manager:** `pnpm` only — do not use `npm` or `yarn`.
+- **TypeScript:** `target: ES2022`, `module: Node16`, `moduleResolution: node16`, `strict: true`, `noEmitOnError: true`. Source in `src/`, output in `out/`. `tsconfig.json` is in `.bobignore` (Bob cannot read it directly; use the shell if needed).
+- **No linter config present yet** (no ESLint/Prettier config files exist). Use the TypeScript strict settings as the style baseline.
+- **`out/` and `*.vsix` are gitignored** — never commit compiled output.
+
+## Cross-module contract rules
+
+All shared types live exclusively in [`src/core/types.ts`](src/core/types.ts). Do not duplicate models.
+
+- `RunStatus`: `'PASS' | 'FAIL' | 'WARN' | 'NOT_RUN' | 'UNKNOWN'` — these exact string literals are used in JSON schemas and must not change.
+- `RuntimeManifest.version` is typed as `const 1` — the schema hard-requires this.
+- `EnvRequirement` must never carry secret values — only the env var **name** and its `EnvCategory`.
+- `CheckResult.observed: boolean` must be `true` only when real execution was observed (never LLM-inferred).
+
+## Stub pattern — how not-implemented functions are written
+
+Every scaffold function uses this exact two-line pattern (with `void arg` to suppress unused-variable errors):
+
+```ts
+export function analyzeEnv(root: string): Promise<EnvRequirement[]> {
+  void root;
+  throw new Error('Not implemented');
+}
+```
+
+Follow this same pattern for new stubs so TypeScript strict mode stays satisfied.
+
+## File ownership (summary)
+
+| Directory / File | Owner |
+|---|---|
+| `src/extension.ts`, `src/commands/`, `src/core/orchestrator.ts`, `src/core/state.ts`, `src/core/bobCommands.ts` | Member A |
+| `src/analyzers/`, `src/core/manifest.ts`, `src/core/evidence.ts`, `src/webview/`, `schemas/` | Member B |
+| `src/execution/`, `test-fixtures/`, `scripts/` | Member C |
+
+Cross-boundary changes require a narrow interface change, not a rewrite.
+
+## Generated Bob slash-command files
+
+The extension writes runtime-generated Markdown files to `.bob/commands/` inside the **target repository** (not this extension repo). Templates live in [`templates/bob-commands/`](templates/bob-commands/). The three commands are `/repo2prod`, `/repo2prod-repair`, `/repo2prod-ci`.
+
+## Secret-safety reminder for agents
+
+- `.bobignore` prevents Bob from indexing any file matching `*secret*`, `*password*`, `*token*`, `.env*`, and many more patterns.
+- Never put real `.env` values in `src/core/` types, diagnostics bundles, or Bob command context.
+- Env var **names** are safe; env var **values** are not.
+
+## Repair-loop hard cap
+
+`MAX_REPAIR_ATTEMPTS = 2` is defined in [`src/core/state.ts`](src/core/state.ts). Do not change this constant without explicit approval — it is a hackathon budget constraint, not an arbitrary limit.
