@@ -1,18 +1,20 @@
-// Environment-variable name collector for Repo2Prod.
+// Environment-variable name collector and classifier for Repo2Prod.
 //
 // Scans Python source files and standard env-example files to collect the
-// NAMES of environment variables referenced in the repository.
+// NAMES of environment variables referenced in the repository, then
+// classifies each name via envClassifier.ts into one of the 5 EnvCategory
+// buckets.
 //
 // This file does NOT:
 //   - read values  (safety: values may be secrets)
 //   - open .env    (that file may contain real secrets)
-//   - classify names into the 5 EnvCategory buckets (that is a later task)
 //   - make any LLM calls
 
 import { readdir, readFile, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { EnvRequirement } from '../core/types';
 import { isEnoent } from './fsUtils';
+import { classifyEnvName } from './envClassifier';
 
 // ---------------------------------------------------------------------------
 // Scan limits — prevent runaway I/O on very large repos
@@ -106,15 +108,14 @@ export async function collectEnvNames(root: string): Promise<EnvNameScan> {
 
   // ---- Source 1: Python files ----
   const pyFiles: string[] = [];
-  await walkPyFiles(root, pyFiles, { count: 0 }, truncationState => {
+  const stopped = { value: false };
+  await walkPyFiles(root, pyFiles, { count: 0 }, stopped, truncationState => {
     if (truncationState) truncated = true;
   });
+  // pyFiles already respects MAX_FILES via the shared stopped flag;
+  // no slice needed — the walker never pushes the file that trips the cap.
 
-  // Respect the file count hard cap
-  const filesToScan = pyFiles.slice(0, MAX_FILES);
-  if (pyFiles.length > MAX_FILES) truncated = true;
-
-  for (const filePath of filesToScan) {
+  for (const filePath of pyFiles) {
     let text: string;
     try {
       const s = await stat(filePath);
@@ -165,13 +166,25 @@ export async function collectEnvNames(root: string): Promise<EnvNameScan> {
 }
 
 // ---------------------------------------------------------------------------
-// analyzeEnv — implemented in the classification task
+// analyzeEnv — env-name collection + classification
 // ---------------------------------------------------------------------------
 
-/** Full env-requirement analysis including classification. Implemented in Task 09. */
-export function analyzeEnv(root: string): Promise<EnvRequirement[]> {
-  void root;
-  throw new Error('Not implemented');
+/**
+ * Collect all environment variable names from `root` and classify each one
+ * into an EnvRequirement using envClassifier.ts.
+ *
+ * Returns one EnvRequirement per unique name, sorted A→Z.
+ * Never reads env-var values; never opens .env.
+ */
+export async function analyzeEnv(root: string): Promise<EnvRequirement[]> {
+  const scan = await collectEnvNames(root);
+
+  return scan.names.map(name => {
+    const { category, required } = classifyEnvName(name);
+    // "rule" is intentionally dropped — EnvRequirement has no such field
+    return { name, category, required };
+  });
+  // names is already sorted A→Z by collectEnvNames, so order is preserved
 }
 
 // ---------------------------------------------------------------------------
@@ -181,13 +194,22 @@ export function analyzeEnv(root: string): Promise<EnvRequirement[]> {
 /**
  * Recursively collect all .py file paths under `dir`, skipping excluded
  * directories and symbolic links (symlinks are skipped to avoid cycles).
+ *
+ * `stopped` is a shared flag: once the cap is hit any directory that has
+ * already started iterating will also exit early, so the walk truly stops
+ * globally rather than only in the current branch.
+ * Entries are sorted by name before iteration so truncation is deterministic.
  */
 async function walkPyFiles(
   dir: string,
   results: string[],
   counter: { count: number },
+  stopped: { value: boolean },
   onTruncated: (t: boolean) => void,
 ): Promise<void> {
+  // Check the shared stop flag at the start of every directory visit
+  if (stopped.value) return;
+
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -196,7 +218,14 @@ async function walkPyFiles(
     throw new Error(`Failed to read directory "${dir}": ${String(err)}`);
   }
 
+  // Sort by Unicode code point (not localeCompare) so the order is fully
+  // deterministic regardless of the machine's locale setting.
+  entries.sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+
   for (const entry of entries) {
+    // Re-check at every iteration — a sibling subdirectory may have tripped the cap
+    if (stopped.value) return;
+
     // Skip symbolic links to avoid cycles and to stay deterministic
     if (entry.isSymbolicLink()) continue;
 
@@ -205,12 +234,14 @@ async function walkPyFiles(
     if (entry.isDirectory()) {
       // Skip well-known non-application directories
       if (SKIP_DIRS.has(entry.name)) continue;
-      await walkPyFiles(fullPath, results, counter, onTruncated);
+      await walkPyFiles(fullPath, results, counter, stopped, onTruncated);
     } else if (entry.isFile() && entry.name.endsWith('.py')) {
       counter.count++;
       if (counter.count > MAX_FILES) {
+        // Set the shared flag so all active directory walks exit on next check
+        stopped.value = true;
         onTruncated(true);
-        return; // stop walking
+        return;
       }
       results.push(fullPath);
     }
