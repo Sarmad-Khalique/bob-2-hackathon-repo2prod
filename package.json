@@ -17,7 +17,7 @@
     "onCommand:repo2prod.prepareRepair",
     "onCommand:repo2prod.prepareCI",
     "onCommand:repo2prod.resetRun",
-    "onCommand:repo2prod.createBobCommandSmokeTest"
+    "onCommand:repo2prod.createBobSkillSmokeTest"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -43,8 +43,8 @@
         "title": "Repo2Prod: Reset Run"
       },
       {
-        "command": "repo2prod.createBobCommandSmokeTest",
-        "title": "Repo2Prod: Create Bob Command Smoke Test"
+        "command": "repo2prod.createBobSkillSmokeTest",
+        "title": "Repo2Prod: Create Bob Skill Smoke Test"
       }
     ]
   },

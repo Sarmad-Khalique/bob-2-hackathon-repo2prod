@@ -1,9 +1,7 @@
 ---
 name: repo2prod-smoke
 description: Verify Repo2Prod integration with IBM Bob
-metadata:
-  user-invocable: true
-  disable-model-invocation: true
+user-invocable: true
 ---
 
 Read AGENTS.md.
@@ -13,4 +11,4 @@ Do not execute commands.
 
 Reply exactly with:
 
-Repo2Prod Bob command integration is working.
+Repo2Prod Bob skill integration is working.
