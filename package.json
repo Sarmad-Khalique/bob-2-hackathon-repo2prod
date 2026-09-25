@@ -6,7 +6,7 @@
   "publisher": "repo2prod",
   "private": true,
   "engines": {
-    "vscode": "^1.138.0"
+    "vscode": "^1.116.0"
   },
   "categories": [
     "Other"
@@ -16,7 +16,8 @@
     "onCommand:repo2prod.verifyRuntime",
     "onCommand:repo2prod.prepareRepair",
     "onCommand:repo2prod.prepareCI",
-    "onCommand:repo2prod.resetRun"
+    "onCommand:repo2prod.resetRun",
+    "onCommand:repo2prod.createBobCommandSmokeTest"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -40,6 +41,10 @@
       {
         "command": "repo2prod.resetRun",
         "title": "Repo2Prod: Reset Run"
+      },
+      {
+        "command": "repo2prod.createBobCommandSmokeTest",
+        "title": "Repo2Prod: Create Bob Command Smoke Test"
       }
     ]
   },
@@ -50,7 +55,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.2",
-    "@types/vscode": "^1.138.0",
+    "@types/vscode": "^1.116.0",
     "@vscode/vsce": "^4.0.0",
     "typescript": "^7.0.2"
   }

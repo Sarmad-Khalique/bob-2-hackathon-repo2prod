@@ -5,6 +5,7 @@ node_modules/**
 .gitignore
 .vscodeignore
 .bobignore
+.pnpm-store
 tsconfig.json
 **/*.map
 **/*.ts
