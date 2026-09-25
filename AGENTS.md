@@ -102,7 +102,7 @@ Runtime/dependency plan
         ↓
 User reviews configuration
         ↓
-Repo2Prod generates .bob/commands/repo2prod.md
+Repo2Prod installs .bob/skills/repo2prod/SKILL.md
         ↓
 User switches to Bob Agent mode
         ↓
@@ -117,7 +117,7 @@ Observed success or failure
 If failure:
 Repo2Prod writes bounded diagnostics
         ↓
-Repo2Prod updates .bob/commands/repo2prod-repair.md
+Repo2Prod updates .repo2prod/diagnostics/latest.json
         ↓
 User runs /repo2prod-repair in Bob Agent mode
         ↓
@@ -127,7 +127,7 @@ Repo2Prod retries
         ↓
 Health checks + tests pass
         ↓
-Repo2Prod prepares .bob/commands/repo2prod-ci.md
+Repo2Prod installs .bob/skills/repo2prod-ci/SKILL.md
         ↓
 /repo2prod-ci
         ↓
@@ -142,13 +142,13 @@ Do not redesign this flow unless a verified platform limitation blocks it.
 
 # 4. Bob integration rules
 
-Repo2Prod uses **Bob-native project slash commands** under:
+Repo2Prod uses **Bob-native project skills** under:
 
 ```text
-.bob/commands/
+.bob/skills/
 ```
 
-The MVP commands are:
+The MVP skills are:
 
 ```text
 /repo2prod
@@ -156,12 +156,12 @@ The MVP commands are:
 /repo2prod-ci
 ```
 
-The extension generates or updates the corresponding Markdown files:
+The extension installs the corresponding skill files:
 
 ```text
-.bob/commands/repo2prod.md
-.bob/commands/repo2prod-repair.md
-.bob/commands/repo2prod-ci.md
+.bob/skills/repo2prod/SKILL.md
+.bob/skills/repo2prod-repair/SKILL.md
+.bob/skills/repo2prod-ci/SKILL.md
 ```
 
 Important:
@@ -192,7 +192,7 @@ The MVP must support:
 - deterministic repository evidence scan;
 - runtime/dependency model;
 - environment-variable classification;
-- `.bob/commands/` generation;
+- `.bob/skills/` installation;
 - visible Bob Agent productionization;
 - real Docker build;
 - real Docker/Compose startup;
@@ -278,7 +278,7 @@ repo2prod/
 │  ├─ execution/
 │  └─ webview/
 ├─ templates/
-│  └─ bob-commands/
+│  └─ bob-skills/
 ├─ schemas/
 ├─ test-fixtures/
 ├─ scripts/
@@ -294,7 +294,7 @@ Owns:
 - workflow state;
 - manifest validation;
 - evidence model;
-- Bob command generation;
+- Bob skill installation;
 - redaction utilities.
 
 Keep this framework-agnostic.
@@ -392,7 +392,7 @@ src/extension.ts
 src/commands/
 src/core/orchestrator.ts
 src/core/state.ts
-src/core/bobCommands.ts
+src/core/bobSkills.ts
 ```
 
 Responsibilities:
@@ -402,7 +402,7 @@ Responsibilities:
 - webview host/bridge;
 - workflow states;
 - `.repo2prod/` file lifecycle;
-- `.bob/commands/` generation;
+- `.bob/skills/` installation;
 - Bob handoff flow;
 - Git guard;
 - VSIX packaging.
@@ -1002,15 +1002,15 @@ Follow this same pattern for new stubs so TypeScript strict mode stays satisfied
 
 | Directory / File | Owner |
 |---|---|
-| `src/extension.ts`, `src/commands/`, `src/core/orchestrator.ts`, `src/core/state.ts`, `src/core/bobCommands.ts` | Member A |
+| `src/extension.ts`, `src/commands/`, `src/core/orchestrator.ts`, `src/core/state.ts`, `src/core/bobSkills.ts` | Member A |
 | `src/analyzers/`, `src/core/manifest.ts`, `src/core/evidence.ts`, `src/webview/`, `schemas/` | Member B |
 | `src/execution/`, `test-fixtures/`, `scripts/` | Member C |
 
 Cross-boundary changes require a narrow interface change, not a rewrite.
 
-## Generated Bob slash-command files
+## Generated Bob skill files
 
-The extension writes runtime-generated Markdown files to `.bob/commands/` inside the **target repository** (not this extension repo). Templates live in [`templates/bob-commands/`](templates/bob-commands/). The three commands are `/repo2prod`, `/repo2prod-repair`, `/repo2prod-ci`.
+The extension installs static skill files into `.bob/skills/` inside the **target repository** (not this extension repo). Templates live in [`templates/bob-skills/`](templates/bob-skills/). The three skills are `/repo2prod`, `/repo2prod-repair`, `/repo2prod-ci`.
 
 ## Secret-safety reminder for agents
 

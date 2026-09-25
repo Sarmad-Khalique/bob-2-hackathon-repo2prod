@@ -2,7 +2,9 @@
   "compilerOptions": {
     "target": "ES2022",
     "module": "Node16",
-    "lib": ["ES2022"],
+    "lib": [
+      "ES2022"
+    ],
     "outDir": "out",
     "rootDir": "src",
     "sourceMap": true,
@@ -11,8 +13,16 @@
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
     "moduleResolution": "node16",
-    "noEmitOnError": true
+    "noEmitOnError": true,
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src"],
-  "exclude": ["node_modules", "out"]
+  "include": [
+    "src"
+  ],
+  "exclude": [
+    "node_modules",
+    "out"
+  ]
 }
