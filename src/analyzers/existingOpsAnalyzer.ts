@@ -3,40 +3,18 @@
 //
 // Checks are file-existence only. File contents are never read or parsed.
 // Framework detection, env scanning, and Git state live in other analyzers.
+//
+// Shared fs helpers (fileExists, isEnoent) now live in fsUtils.ts so other
+// analyzers can reuse them without duplication.
 
-import { stat, readdir } from 'node:fs/promises';
+import { readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { Evidence } from '../core/types';
+import { fileExists, isEnoent } from './fsUtils';
 
 // ---------------------------------------------------------------------------
 // Internal helpers
 // ---------------------------------------------------------------------------
-
-/**
- * Return true if `filePath` exists as a regular file.
- * ENOENT → false; any other error is rethrown with the path included.
- */
-async function fileExists(filePath: string): Promise<boolean> {
-  try {
-    const s = await stat(filePath);
-    return s.isFile();
-  } catch (err: unknown) {
-    if (isEnoent(err)) {
-      // Missing file is the normal "not present" case — not an error.
-      return false;
-    }
-    throw new Error(`Failed to stat "${filePath}": ${String(err)}`);
-  }
-}
-
-/** Narrow type-guard for ENOENT fs errors. */
-function isEnoent(err: unknown): boolean {
-  return (
-    typeof err === 'object' &&
-    err !== null &&
-    (err as NodeJS.ErrnoException).code === 'ENOENT'
-  );
-}
 
 /**
  * Return true if `workflowsDir` contains at least one `.yml` or `.yaml` file.

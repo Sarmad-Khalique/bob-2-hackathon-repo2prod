@@ -1,7 +1,8 @@
 // Evidence model helpers — constructors and safe defaults for Evidence objects.
 //
 // This file does NOT scan the filesystem or call any external process.
-// All scanning lives in src/analyzers/.
+// All scanning lives in src/analyzers/. The Evidence type itself is owned
+// by src/core/types.ts and must not be redeclared here.
 
 import type { Evidence } from './types';
 
