@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReadinessReport",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["overall", "checks", "repairAttemptsUsed", "summary"],
+  "properties": {
+    "overall": {
+      "enum": ["PASS", "FAIL", "WARN", "NOT_RUN", "UNKNOWN"]
+    },
+    "checks": { "type": "array" },
+    "repairAttemptsUsed": { "type": "integer", "minimum": 0, "maximum": 2 },
+    "summary": { "type": "string" }
+  }
+}

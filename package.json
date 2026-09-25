@@ -1,0 +1,57 @@
+{
+  "name": "repo2prod",
+  "displayName": "Repo2Prod",
+  "description": "Orchestrates execution and verifies a reproducible local runtime for IBM Bob IDE.",
+  "version": "0.0.1",
+  "publisher": "repo2prod",
+  "private": true,
+  "engines": {
+    "vscode": "^1.138.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onCommand:repo2prod.startProductionization",
+    "onCommand:repo2prod.verifyRuntime",
+    "onCommand:repo2prod.prepareRepair",
+    "onCommand:repo2prod.prepareCI",
+    "onCommand:repo2prod.resetRun"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "repo2prod.startProductionization",
+        "title": "Repo2Prod: Start Productionization"
+      },
+      {
+        "command": "repo2prod.verifyRuntime",
+        "title": "Repo2Prod: Verify Runtime"
+      },
+      {
+        "command": "repo2prod.prepareRepair",
+        "title": "Repo2Prod: Prepare Repair"
+      },
+      {
+        "command": "repo2prod.prepareCI",
+        "title": "Repo2Prod: Prepare CI"
+      },
+      {
+        "command": "repo2prod.resetRun",
+        "title": "Repo2Prod: Reset Run"
+      }
+    ]
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -w -p .",
+    "package": "vsce package"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.2",
+    "@types/vscode": "^1.138.0",
+    "@vscode/vsce": "^4.0.0",
+    "typescript": "^7.0.2"
+  }
+}

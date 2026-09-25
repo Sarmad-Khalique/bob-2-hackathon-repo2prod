@@ -76,6 +76,7 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 .npm
+.pnpm-store
 
 # Python
 __pycache__/
@@ -118,3 +119,9 @@ build/
 # DO NOT REMOVE ABOVE PATTERNS
 # Add project-specific patterns below
 # ============================================
+
+# Repo2Prod extension build
+out/
+*.vsix
+*.tsbuildinfo
+.pnpm-debug.log*

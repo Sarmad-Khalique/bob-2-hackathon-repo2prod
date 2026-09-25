@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "RuntimeManifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "stack", "services", "edges", "commands", "env"],
+  "properties": {
+    "version": { "const": 1 },
+    "stack": { "type": "object" },
+    "services": { "type": "array" },
+    "edges": { "type": "array" },
+    "commands": { "type": "object" },
+    "env": { "type": "array" }
+  }
+}

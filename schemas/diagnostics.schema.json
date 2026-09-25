@@ -1,0 +1,15 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "FailureBundle",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["attempt", "phase", "command", "exitCode", "redactedExcerpt", "truncated"],
+  "properties": {
+    "attempt": { "type": "integer", "minimum": 0 },
+    "phase": { "type": "string" },
+    "command": { "type": ["string", "null"] },
+    "exitCode": { "type": ["integer", "null"] },
+    "redactedExcerpt": { "type": "string" },
+    "truncated": { "type": "boolean" }
+  }
+}
