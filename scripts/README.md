@@ -1,5 +1,9 @@
 # Scripts
 
+## exec-smoke.cjs
+
+Dev-only smoke test for `src/execution/*` — runs after `pnpm compile` against the golden-demo fixture; prints a `PASS`/`FAIL` line per step.
+
 ## reset-demo-fixture.sh
 
 Copies the golden-demo fixture into a controlled demo workspace, tears down

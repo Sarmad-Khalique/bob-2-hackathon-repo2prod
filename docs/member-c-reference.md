@@ -3,9 +3,13 @@
 **Role:** Member C — Execution, verification, diagnostics, golden demo fixture
 **Branch:** `feat/verification-demo`
 **Stack (locked, do not reopen):** Django + PostgreSQL
-**Sources:** `AGENTS.md`, `Repo2Prod — Team Execution Plan & Build Spec v0.4.pdf` (incl. its SAMPLE PROMPT), the code on `main` up to `821338d` (2026-09-26), and the team's first end-to-end test in `~/Desktop/sandbox-sarmad` (see §2A).
+**Sources:** `AGENTS.md`, `Repo2Prod — Team Execution Plan & Build Spec v0.4.pdf` (incl. its SAMPLE PROMPT), the code on `main` up to `821338d` (2026-09-26), the team's first end-to-end test in `~/Desktop/sandbox-sarmad` (see §2A), and Member C's C1/C2 results and reviews (2026-09-27, see §2B).
 
-> **Status for the team (answer to "Is Member C's branch/PR ready?"):** not yet. All Member C modules are still stubs. Member C is now building C2 → C3 → C4 directly against the real `sandbox-sarmad` SQLite failure (§2A), and will open the PR once that failure produces a correct `diagnostics/latest.json` and `DIAGNOSTIC_READY`.
+> **Status for the team (2026-09-27):**
+> - **C1 is done and committed** (`32e75d1`): the golden Django + Postgres fixture and the reset script.
+> - **C2 is done and reviewed:** the process runner and Docker/Compose wrappers. The commit is still pending.
+> - **Next is C3** (the verifier), with the C2 follow-up fixes F1–F9 folded in (§2B).
+> - The PR opens once C3–C5 take the golden fixture's real failure all the way to `diagnostics/latest.json` + `DIAGNOSTIC_READY`. `sandbox-sarmad` stays the secondary check.
 
 > **Local code collects facts. Bob interprets and modifies. Local code verifies.**
 > Member C owns the "local code verifies" part. Nothing gets PASS unless Member C's code saw it happen.
@@ -17,6 +21,7 @@
 1. [What Member C owns](#1-what-member-c-owns)
 2. [Project status snapshot](#2-project-status-snapshot)
    - [2A. Live test target: sandbox-sarmad SQLite failure](#2a-live-test-target-sandbox-sarmad-sqlite-failure)
+   - [2B. Progress and review log (C1, C2) + C2 follow-up fixes](#2b-progress-and-review-log-c1-c2--c2-follow-up-fixes)
 3. [Hard rules for Member C](#3-hard-rules-for-member-c)
 4. [Contracts Member C must use](#4-contracts-member-c-must-use)
 5. [Gaps and risks to resolve with the team](#5-gaps-and-risks-to-resolve-with-the-team)
@@ -76,19 +81,20 @@
 - New session evidence `bob_sessions/necromancers_task06_bob_repo2prod_skill_update.png`. Task numbers are not strictly global in practice (task06 was used after task11 existed), so confirm the numbering rule with the team.
 - Your branch `feat/verification-demo` doesn't have this commit yet. Run `git pull origin main` (or rebase) before starting the next Bob task.
 
-### Member C — current state (all stubs)
+### Member C — current state (updated 2026-09-27)
 | File | State |
 |---|---|
-| `src/execution/processRunner.ts` | Types only (`ProcessRunOptions`, `ProcessRunResult`, `ProcessHandle`, `ProcessRunner`). Keep and extend them. |
-| `src/execution/docker.ts` | `dockerBuild()` throws Not implemented |
-| `src/execution/compose.ts` | `composeUp()` / `composeDown()` throw |
-| `src/execution/verifier.ts` | `verifyRuntime(manifest)` throws |
-| `src/execution/diagnostics.ts` | `createFailureBundle(...)` throws |
-| `src/core/redaction.ts` | `redactText()` throws |
-| `test-fixtures/golden-demo/` | README placeholder only |
-| `scripts/` | README placeholder only |
+| `test-fixtures/golden-demo/` | ✅ C1, committed `32e75d1` |
+| `scripts/reset-demo-fixture.sh` | ✅ C1, committed `32e75d1` |
+| `src/execution/processRunner.ts` | ✅ C2 (`runProcess`, `formatCommand`, `CommandOutcome`). Follow-ups F2 and F3 are done in C3. |
+| `src/execution/docker.ts` | ✅ C2 (`checkDocker`). Follow-up F6 is done in C3. |
+| `src/execution/compose.ts` | ✅ C2 (all wrappers). Follow-ups F1, F4, F5, F7, F8 and F9 are done in C3. |
+| `scripts/exec-smoke.cjs` | ✅ C2, 33/33 PASS |
+| `src/execution/verifier.ts` | stub, to be built in **C3** (next) |
+| `src/execution/diagnostics.ts` | stub, to be built in C4 |
+| `src/core/redaction.ts` | stub, to be built in C4 |
 
-**No code outside `src/execution/` calls these stubs yet**, so C is free to reshape their signatures, as long as `pnpm compile` stays green.
+**No code outside `src/execution/` calls the execution modules yet**, so C can still reshape signatures, as long as `pnpm compile` stays green.
 
 ### Environment on this machine
 Docker 29.2.1, Docker Compose v5.5.1, Python 3.12, pnpm. TypeScript `^7`, `strict`, `module: Node16`, output in `out/`.
@@ -198,11 +204,74 @@ The fix belongs to Bob in `/repo2prod-repair`, not to us. Plausible smallest fix
 3. The run state here says `WAITING_FOR_BOB_PRODUCTIONIZATION`, so once C5 is wired, **Repo2Prod: Verify Runtime** is the exact next step from this state. If the copied run-state causes trouble (foreign `workspaceRoot`), re-run Start Productionization → Approve in Bob. Bob's files are already present, so skip the `/repo2prod` call to save Bobcoins.
 
 ### What this changes for Member C
-- **Priority order is now C2 → C3 → C4 → C5 against this sandbox, then C1.** The concrete failure unblocks execution work immediately.
+- *Superseded 2026-09-27:* C1 was built after all, and it fails in the **same way** (build OK, `up -d` exits 0, the app exits 1 during `migrate`). The golden fixture is now the primary target, and this sandbox is the secondary check.
 - The verifier must be **manifest-driven**, not Django+Postgres-hardcoded: infra checks come from the manifest's non-`app` services (none here gives `database` NOT_RUN).
 - **No health endpoint** is a normal case, not an error. See the updated health rules in the C3 prompt (§8.3).
 - **No tests** gives `tests` NOT_RUN, never PASS. Django prints `Ran 0 tests` / `NO TESTS RAN`. Treat those as NOT_RUN regardless of exit code.
 - Whether the **final demo** uses this SQLite failure or the planned Postgres `localhost` fixture (C1) is an open team decision (§12). AGENTS.md prefers PostgreSQL "unless the fixture genuinely needs something else".
+
+---
+
+## 2B. Progress and review log (C1, C2) + C2 follow-up fixes
+
+### C1: golden fixture + reset ✅
+Committed `32e75d1`. Bob session `task012`, 5.78 Bobcoins.
+- **Pins:** Django 6.1.1, psycopg[binary] 3.2.9 and gunicorn 23.0.0 on `python:3.12-slim`, plus `postgres:16-alpine`. A cold build takes about 90 s; with the pip layer cached, about 32 s.
+- **Demo copy:**
+  - lives in `~/repo2prod-demos/golden-demo`, with Compose project `repo2prod-golden-demo`;
+  - the safety marker is `.git/repo2prod-demo-marker`, invisible to the app, `git status` and Bob;
+  - every reset generates a fresh random `.env` (`SECRET_KEY`, `POSTGRES_PASSWORD`), which is never committed.
+- **Observed failure:** `up -d` exits 0 → db `Up (healthy)` → the app shows `Exited (1)` during `migrate`, with `port 5432 failed: Connection refused` (host `localhost`).
+- **Known fix:** `POSTGRES_HOST: db` → `/health/` returns 200 and `Ran 3 tests ... OK`.
+- **Analyzer on the demo copy:** `django`/`pip`; services `app` (8000) and `db` (postgres, 5432); edge `app → db`; 9 env names.
+- **Review notes:**
+  - **Don't adopt** Bob's suggestion to tell `/repo2prod` "don't add env vars unless the build fails". That would tune the product skill to keep our demo bug alive, which is a fake failure under AGENTS.md §18.
+  - The fixture README documents `POSTGRES_HOST` with default `localhost`. That's realistic, but it's a clue that makes Bob more likely to fix the host during `/repo2prod`. Let the dry run decide.
+  - Optional hardening for the reset script: a relative `REPO2PROD_DEMO_DIR` slips past the "inside repo" check (the marker file still protects deletion), and `git commit` can fail with global commit signing (fix: `-c commit.gpgsign=false`).
+- **Still pending: the `/repo2prod` dry run** on a fresh reset, to check whether the defect survives. As of 2026-09-27 the demo copy is an untouched reset (no Bob changes), so the dry run hasn't happened yet.
+
+### C2: process runner + Docker/Compose ✅
+Reviewed 2026-09-27; the commit is pending. Bob session `task13`, 4.82 Bobcoins.
+- **API:**
+  - `runProcess` / `formatCommand` / `CommandOutcome` / `ProcessRunner`;
+  - `checkDocker`;
+  - `deriveComposeProjectName`, `findComposeFile`, `noComposeFileMessage`, `checkCompose`;
+  - `composeBuild`, `composeUp`, `composePs`, `composePort`, `composeLogs`, `composeRun`, `composeDown`;
+  - `COMPOSE_TIMEOUTS_MS` (build/run 600 s, up/down 120 s, logs 30 s, check/ps/port 15 s).
+- **Verified by review:**
+  - the type-check passes;
+  - `-p` is set in exactly one place (`composeArgs`); `checkCompose` is the only call without it;
+  - `ProcessHandle` and the old stubs are deleted;
+  - no `vscode`, `prune`, `compose config` or `.env` reads;
+  - `ok` is false on a timeout, cancel, or failure to start;
+  - project names match the reset script's bash rule on all 7 examples.
+- **Observed on Compose v5.5.1:**
+  - `ps -a --format json` prints **NDJSON** (one object per line);
+  - `Health` is `""` for a service without a healthcheck;
+  - `ps` on a project that is down exits **0** with empty output;
+  - `composePort` returns `null` for an exited container;
+  - the flags `--ansi never`, `--progress plain`, `logs --no-log-prefix` and `run -T` all exist.
+- **Corrections to Bob's report:**
+  - Its risk 1 is wrong. `ps` on a down project exits 0 with `ok: true, services: []`, so no special case is needed.
+  - Its name table has a "bash output" column, but the smoke script only compares against hard-coded values. I ran the bash rule separately, and it gives identical results.
+
+### C2 follow-up fixes (folded into the C3 prompt, Part 1)
+| # | File | Issue | Fix |
+|---|---|---|---|
+| F1 | `compose.ts` `composePs` | A parse failure returns `ok:false` with **no message**, and the comment wrongly says one is attached via stderr. C3 can't tell "command failed" from "output unreadable". | Add `error: string \| null` to `ComposePsResult`. |
+| F2 | `processRunner.ts` | Output is only trimmed when the process closes, so all chunks stay in memory while it runs. The spec asks for bounded output. | Keep a running byte total and drop the oldest chunks once it passes `maxOutputBytes`. |
+| F3 | `processRunner.ts` `killProcess` | The 3 s SIGKILL timer is never cleared, so it keeps Node alive after the child exits. | Clear it when the process closes, or `unref()` it. |
+| F4 | `compose.ts` comments | The `findComposeFile` JSDoc says it "returns a message" (it returns `string \| null`), and there's a false stderr comment in `composePs`. | Fix the comments. |
+| F5 | `compose.ts` `composePort` | It repeats the runner call instead of using the shared helper, uses an inline `import()` type, and treats port `0` as a real port. | Route it through the helper, use a normal type import, and treat `0` as `null`. |
+| F6 | `docker.ts` `checkDocker` | Exit 0 with an empty version gives `ok:true` "version unknown". | Return `ok:false` with "Docker daemon did not report a version." |
+| F7 | `compose.ts` `ComposeServiceStatus` | There's no `image` or published ports. The verifier needs them to find Postgres when Bob names the service differently, and to find the app port when the manifest has none (sandbox). | Add `image` and `publishedPorts[]`, parsed from `Publishers` or else `Ports`. |
+| F8 | `compose.ts` `composeUp` | A renamed or removed service leaves a stale exited container that confuses `ps`. | Use `up -d --remove-orphans`. |
+| F9 | `compose.ts` | The helper name `runComposeT` is unclear. | Rename it to `runCompose`. |
+
+Optional nits, not in the prompt:
+- The smoke script is 217 lines against a target of about 120.
+- The `cwd` check reports a permission error as "not found".
+- The one-line `// ─── Section ───` dividers are short enough to keep.
 
 ---
 
@@ -319,9 +388,9 @@ DIAGNOSTIC_READY → (A: prepareRepair, max 2) → BOB_REPAIR_SKILL_READY → WA
 | 1 | `FailureBundle` lacks the spec C4 fields: failed service, relevant files, manifest reference, previous repair outcome. The schema has `additionalProperties: false`. | Propose adding optional fields `failedService: string \| null`, `relevantFiles: string[]`, `manifestRef: string`, `previousOutcome: string \| null`. Update `types.ts` and `diagnostics.schema.json` in one change. **Post to the team first.** Until then, fit what's needed into `redactedExcerpt` headers. | A + B |
 | 2 | Verifier inputs: the manifest has `commands: null` everywhere, and no health path. | Add a C-owned `VerifyOptions` in `src/execution/` (`workspaceRoot`, `composeFile`, `projectName`, `appService`, `infraServices`, `appContainerPort`, `healthPath`, `testCommand`, timeouts). **Derive infra services from the manifest's non-`app` services** (sandbox-sarmad has none, so `database` is NOT_RUN). Only framework defaults (`testCommand: ['python','manage.py','test']`) live in a Django defaults object. Read the host port with `docker compose port`. If the manifest has no app port (sandbox: `ports: []`), fall back to the Compose-published port of `app`. | A |
 | 3 | **Defect survival:** Bob's `/repo2prod` may proactively fix the `localhost` DB host, and then there's no real failure to show. | Put the defect where it reads like a normal "works on my laptop" default: `settings.py` reads `POSTGRES_HOST` with default `localhost`, and the baseline `compose.yaml` doesn't set it. C1 must include one real `/repo2prod` dry run to confirm the failure still appears. If Bob fixes it, decide as a team (e.g. keep the `/repo2prod` flow and show repair on a different real defect). **Never fake it.** | whole team |
-| 4 | Bob must open the fixture as its own workspace and git repo, not as a subfolder of the extension repo. | The reset script copies the baseline to a separate demo dir (default `~/repo2prod-demo`), runs `git init`, and makes a baseline commit. It refuses to delete a dir that lacks a marker file. | — |
+| 4 | Bob must open the fixture as its own workspace and git repo, not as a subfolder of the extension repo. | ✅ Done (C1). The reset script copies the baseline to `~/repo2prod-demos/golden-demo`, runs `git init`, and makes an "Initial commit". It refuses to delete a dir without the marker `.git/repo2prod-demo-marker`. | — |
 | 5 | "Container up" ≠ PASS. Also, many real repos (sandbox-sarmad) have **no health endpoint**. | Fixture (C1): `/health/` runs `SELECT 1` and returns 200 `{"status":"ok","database":"ok"}` or 503. Verifier: probe the configured health path. If the repo has none, do an HTTP smoke probe of `/`. **Any HTTP response below 500 (incl. 404) gives `health` WARN** (observed, "server responds; no explicit health endpoint"). 5xx or connection refused gives FAIL. PASS only on 200 from an explicit health path. Also, `docker compose up -d` exits 0 even when the app dies later, so check `ps -a` plus a stability window. | A (report semantics) |
-| 6 | Compose project naming and cleanup scope. | `projectName = 'repo2prod-' + sanitized(basename(workspaceRoot))`. For the demo dir that gives `repo2prod-repo2prod-demo`; acceptable, or name the dir `demo`. Cleanup is only `docker compose -p <name> down --remove-orphans` (+ `-v` only for a full reset). | — |
+| 6 | Compose project naming and cleanup scope. | ✅ Done (C1 + C2). `repo2prod-` + basename, lowercased, with each run of characters outside `[a-z0-9-]` turned into `-` (consecutive hyphens squeezed), and one trailing `-` trimmed. This is identical in bash (reset script) and TS (`deriveComposeProjectName`). Cleanup is only `docker compose -p <name> down --remove-orphans` (+ `-v` for a full reset). | — |
 | 7 | ~~`/repo2prod` SKILL.md requires `resolved-config.json`, which nobody writes.~~ **Resolved on main `821338d`:** it's now optional. | Nothing to do. `extraSecrets` can still come from it later if Member A writes generated local secrets there. | — |
 | 8 | Who creates the ReadinessReport? | Member A (Task 8). C just returns `VerificationResult`. | A |
 | 9 | No test runner. | Optional support prompt S1 adds Vitest. Get a team OK first (new devDependency). | team |
@@ -335,7 +404,7 @@ DIAGNOSTIC_READY → (A: prepareRepair, max 2) → BOB_REPAIR_SKILL_READY → WA
 
 ## 6. Task roadmap C1 → C5
 
-Order (**updated after the sandbox-sarmad failure**): **C2 → C3 → C4 → C5 against `sandbox-sarmad`, then C1** (or skip C1 if the team picks the SQLite sandbox as the demo target). The real failure (§2A) is the acceptance test for C2–C4: it must end in a correct `latest.json` and `DIAGNOSTIC_READY` without any manual fix.
+Order (**updated 2026-09-27**): C1 ✅ → C2 ✅ → **C3 (+ C2 follow-ups F1–F9)** → C4 → C5, with C6 alongside once Member A agrees. The golden fixture is the primary acceptance target, and `sandbox-sarmad` is the secondary one. Both must end in a correct `latest.json` and `DIAGNOSTIC_READY` without any manual fix.
 
 | Task | Goal | Key files | Done when (PDF §11) | Integration |
 |---|---|---|---|---|
@@ -872,7 +941,9 @@ Do not implement anything outside this task.
 
 ---
 
-### 8.3 — C3: Verification engine
+### 8.3 — C3: Verification engine (+ C2 follow-ups)
+
+> Updated 2026-09-27 after the C2 review. It includes follow-ups F1–F9 (§2B) as Part 1. It uses the real Compose v5.5.1 behaviour observed in C2, and works with or without the C6 health declaration.
 
 ```text
 Read @AGENTS.md completely before making any changes.
@@ -880,222 +951,420 @@ Read @AGENTS.md completely before making any changes.
 I am Member C of Repo2Prod.
 
 This is Task C3: implement the verification engine in
-src/execution/verifier.ts.
+src/execution/verifier.ts, plus a short list of C2 follow-up fixes.
 
 IMPORTANT CONTEXT
 
-REAL TEST TARGET (use this, not an imaginary app):
-~/Desktop/sandbox-sarmad-work  (a copy of ~/Desktop/sandbox-sarmad; never
-modify the baseline copy ~/Desktop/sandbox-sarmad-failing-baseline).
-It is a Django 6.1 + SQLite app that Bob already productionized. Docker build
-succeeds, but the app container exits during `migrate` with
-  sqlite3.OperationalError: unable to open database file
-because compose.yaml mounts the named volume db_data onto the FILE path
-/app/db.sqlite3 (a named volume is always a directory).
-DO NOT FIX THIS FAILURE — it is the input my code must observe and report.
-Facts: single service "app", no db service, port 8000 published, no health
-endpoint (only /admin/), no tests, a real .env exists (NEVER read it and
-NEVER run `docker compose config`, which would print interpolated secrets).
+This follows the Team Execution Plan v0.4, section 11, task C3:
+"Verification order: image/build result, infrastructure/dependency
+readiness, application process/container, health/smoke endpoint, tests.
+Container started does not automatically mean ready. A 404 on / is not
+automatically an application failure. Use an explicit health endpoint when
+available. If there are no tests, report NOT_RUN rather than PASS. Set
+observed = true only for checks backed by actual execution."
+Done when: the healthy fixture returns real PASS evidence and the broken
+fixture returns an actual failure.
 
-Expected result for this sandbox: docker/compose/build PASS, database
-NOT_RUN (no infra service), app FAIL at STARTING, health/tests NOT_RUN.
+Done and committed (do NOT redo; modify only the C2 follow-ups in Part 1):
+- C1: test-fixtures/golden-demo. Django 6.1.1 app service "app" on
+  container port 8000, PostgreSQL 16 service "db". GET /health/ runs
+  SELECT 1 and returns 200 {"status":"ok","database":"ok"} or 503.
+  There are 3 tests. scripts/reset-demo-fixture.sh creates
+  $HOME/repo2prod-demos/golden-demo with compose project
+  repo2prod-golden-demo.
+- C2: src/execution/processRunner.ts (runProcess, formatCommand,
+  CommandOutcome), docker.ts (checkDocker), compose.ts
+  (deriveComposeProjectName, findComposeFile, noComposeFileMessage,
+  checkCompose, composeBuild, composeUp, composePs, composePort,
+  composeLogs, composeRun, composeDown, COMPOSE_TIMEOUTS_MS), and
+  scripts/exec-smoke.cjs (33/33 PASS).
 
-C2 is complete: src/execution/processRunner.ts, docker.ts, compose.ts provide
-runProcess, checkDocker, checkCompose, composeBuild, composeUp, composePs,
-composePort, composeLogs, composeRun, composeDown, deriveComposeProjectName,
-findComposeFile.
+Observed on this machine (Docker Compose v5.5.1). Use these facts:
+- `ps -a --format json` prints one JSON object per line (NDJSON).
+- Health is "" for a service without a healthcheck, and "healthy" for db.
+- Broken fixture: `up -d` exits 0; db is running and healthy; app has State
+  "exited" and ExitCode 1; the app logs contain
+  'port 5432 failed: Connection refused'; composePort(app) returns null.
+- `ps` on a project that is down exits 0 with empty output, which gives
+  ok true and services [].
+- The app depends on db via depends_on: condition: service_healthy, so
+  `up -d` itself fails (non-zero) if db never becomes healthy.
+- Fixed fixture (POSTGRES_HOST: db added): /health/ returns 200, and tests
+  report "Ran 3 tests ... OK".
+
+Optional secondary target: ~/Desktop/sandbox-sarmad-work, if it exists. It
+is a COPY of ~/Desktop/sandbox-sarmad; never touch the original. It is
+Django + SQLite with a single service "app", no db service, no health
+endpoint and no tests. The app exits 1 during migrate with
+"unable to open database file".
 
 Shared types in src/core/types.ts (DO NOT MODIFY):
   RunStatus = 'PASS'|'FAIL'|'WARN'|'NOT_RUN'|'UNKNOWN'
-  CheckResult { id, status, observed, detail }
+  CheckResult { id: string; status: RunStatus; observed: boolean; detail: string | null }
   VerificationResult { checks: CheckResult[] }
+  RuntimeManifest { version, stack, services[{ id, name, image, ports }], edges,
+                    commands (all null), env }
 
-Member A's orchestrator (src/core/orchestrator.ts) owns state and has hooks:
-  beginStarting()      BUILDING -> STARTING
-  beginVerification()  STARTING -> VERIFYING_HEALTH
-  beginTests()         VERIFYING_HEALTH -> RUNNING_TESTS
-  markVerified()       RUNNING_TESTS -> VERIFIED
-  recordFailure(bundle)  -> DIAGNOSTIC_READY
-The verifier must NOT import the orchestrator or vscode. It reports phases
-through a callback so Member A's command layer can call those hooks.
+Member A's orchestrator owns workflow state (hooks: beginStarting,
+beginVerification, beginTests, markVerified, recordFailure). The verifier
+must NOT import the orchestrator or vscode. It reports phase changes through
+a callback; Member A's command layer (task C5) turns them into hook calls.
 
-Member B's RuntimeManifest has commands all null, so the verifier must not
-depend on manifest.commands.
+Task C6 (Bob declares a health endpoint in .repo2prod/health-endpoint.json)
+is agreed but NOT implemented yet, so that file will usually be missing.
+The verifier must work with and without it.
 
 ==================================================
 OWNERSHIP / SCOPE
 ==================================================
 
-Modify only src/execution/verifier.ts (and a small
-src/execution/verifyDefaults.ts for stack defaults if useful).
-Do NOT modify src/core/*, src/commands/*, analyzers, schemas.
-Do NOT write diagnostics files (C4).
+FILES TO MODIFY / CREATE (and nothing else):
+  src/execution/verifier.ts        replace the stub (nothing calls it)
+  src/execution/processRunner.ts   C2 follow-ups F2 and F3 only
+  src/execution/docker.ts          C2 follow-up F6 only
+  src/execution/compose.ts         C2 follow-ups F1, F4, F5, F7, F8, F9 only
+  scripts/exec-smoke.cjs           update only where the C2 API changed
+  scripts/verify-smoke.cjs         NEW, small dev-only script for C3
+  scripts/README.md                add ONE line for verify-smoke.cjs
+
+FILES YOU MUST NOT TOUCH:
+  src/execution/diagnostics.ts, src/core/redaction.ts (C4)
+  src/execution/gitGuard.ts (Member A's)
+  src/core/**, src/commands/**, src/webview/**, src/analyzers/** (import only)
+  test-fixtures/**, scripts/reset-demo-fixture.sh
+  templates/**, schemas/**, docs/**, bob_sessions/**, .bob/**, out/**
+  package.json, pnpm-lock.yaml, tsconfig.json, AGENTS.md,
+  .gitignore, .bobignore, .vscodeignore
 
 ==================================================
-GOAL
+PART 1 — C2 FOLLOW-UP FIXES (small; do these first)
 ==================================================
 
-Run verification in a fixed order and return real, observed evidence.
-Stop at the first failing phase and report which phase failed plus the raw
-(unredacted, bounded) output needed for diagnostics.
+These come from the C2 review. Keep each change minimal:
+
+F1 compose.ts, composePs: a parse failure returns ok=false with no message.
+   The comment claims a message is attached via stderr, but nothing is.
+   Add `error: string | null` to ComposePsResult: null on success,
+   "Could not parse `docker compose ps` output." on a parse failure, and a
+   short reason when the command itself failed.
+F2 processRunner.ts: output is trimmed only when the process closes, so all
+   chunks stay in memory while it runs. Keep a running byte total per stream
+   and drop the oldest chunks once it exceeds maxOutputBytes. Still slice
+   the exact tail at the end, and keep the truncated flags correct.
+F3 processRunner.ts, killProcess: the 3 s SIGKILL timer is never cleared,
+   so it keeps Node alive after the child exits. Clear it when the process
+   closes (or unref() it).
+F4 compose.ts comments: findComposeFile's JSDoc says it "returns a message",
+   but it returns string | null; fix it. Remove the false stderr comment in
+   composePs (F1 replaces it).
+F5 compose.ts, composePort: route it through the shared compose helper
+   instead of a second copy of the runner call. Import ProcessRunResult as a
+   normal type import (no inline import()). Treat host port 0 as null.
+F6 docker.ts, checkDocker: exit 0 with an empty version must give ok=false
+   and the message "Docker daemon did not report a version."
+F7 compose.ts, ComposeServiceStatus: add `image: string` (from Image) and
+   `publishedPorts: { target: number; published: number }[]`. Parse them
+   from the Publishers array when present, otherwise from the Ports string
+   (e.g. "0.0.0.0:8000->8000/tcp"). Remove duplicate IPv4/IPv6 entries.
+   Look at the real JSON first, and report which field v5.5.1 provides.
+F8 compose.ts, composeUp: use `up -d --remove-orphans`, so a renamed or
+   removed service can't leave a stale exited container that confuses ps.
+F9 compose.ts: rename the private helper runComposeT to runCompose.
+
+After Part 1: run pnpm compile, then the reset script, then
+scripts/exec-smoke.cjs. It must still be all PASS. Change the smoke script
+only where the API changed (e.g. the new error/image/publishedPorts fields).
 
 ==================================================
-API
+NO REDUNDANT WORK
+==================================================
+
+- Reuse the C2 functions. Never call docker directly from verifier.ts, and
+  never re-implement ps parsing, project naming, or command formatting.
+- Use the shared types from src/core/types.ts; don't redeclare CheckResult
+  or VerificationResult. Execution-only types stay in verifier.ts.
+- Keep one ordered list of check ids, one timeouts constant, and one helper
+  that marks the remaining checks NOT_RUN.
+- Don't re-verify C1 or C2 beyond what's listed here. Don't rebuild images
+  needlessly; the layer cache is fine.
+- Don't write separate docs. The code comments are the documentation.
+
+==================================================
+COMMENTS (for human review; keep them short)
+==================================================
+
+Same rules as C2:
+- Each file starts with a 1–3 line header: what it does, and what it must
+  never do.
+- One short /** ... */ line per exported item (about 15 words).
+- Inline comments only where the "why" isn't obvious. For example: why
+  `up -d` exit 0 isn't success, why there's a stability window, why the
+  health loop re-checks the container, why a 404 on a conventional path
+  moves on but a 404 on a declared path fails, why "NO TESTS RAN" counts as
+  NOT_RUN, why tests use --noinput, and why there is no -f flag.
+- Each comment is 1 line (about 100 characters), 2 lines at most. No
+  banners, no comments that restate the code, no emojis.
+
+==================================================
+PART 2 — VERIFIER API (src/execution/verifier.ts)
 ==================================================
 
 export type ExecutionPhase = 'BUILDING' | 'STARTING' | 'VERIFYING_HEALTH' | 'RUNNING_TESTS';
 
+/** Fixed order; every run returns exactly these 7 checks, in this order. */
+export const CHECK_IDS = ['docker', 'compose', 'build', 'database', 'app', 'health', 'tests'] as const;
+export type CheckId = typeof CHECK_IDS[number];
+
+export const VERIFY_TIMEOUTS_MS = {
+  dbReady: 60_000,       // wait for infrastructure services to be healthy/running
+  appStable: 5_000,      // the app must stay running this long after `up`
+  health: 45_000,        // whole health-polling window (migrate + boot)
+  healthRequest: 3_000,  // per HTTP request
+  pollInterval: 1_000,
+};
+
+export interface HealthTarget { path: string; source: 'declared' | 'conventional' }
+
 export interface VerifyOptions {
-  workspaceRoot: string;
-  projectName?: string;          // default deriveComposeProjectName(root)
-  composeFile?: string;          // default findComposeFile(root)
-  appService: string;            // default 'app'
-  infraServices: string[];       // manifest services whose id !== 'app' ([] for sandbox-sarmad)
-  appContainerPort: number | null; // manifest app port; null -> use the port Compose publishes for app
-  healthPath: string | null;     // from .repo2prod/health-endpoint.json (C6) if valid; null -> smoke probe of "/"
-  testCommand: string[] | null;  // Django default ['python','manage.py','test'] (null -> NOT_RUN)
-  timeouts: { buildMs, upMs, readinessMs, healthMs, testsMs };
+  workspaceRoot: string;            // the folder currently open; never evidence.workspaceRoot
+  projectName: string;              // deriveComposeProjectName(workspaceRoot)
+  appService: string;               // Compose service name of the app (default 'app')
+  infraServices: { id: string; name: string }[];  // manifest services other than 'app'
+  appContainerPort: number | null;  // the manifest app port, else null
+  healthTargets: HealthTarget[];    // the declared path first (if valid), then conventional ones
+  testCommand: string[] | null;     // null means tests are NOT_RUN
 }
 
 export interface VerificationOutcome {
   result: VerificationResult;
   failedPhase: ExecutionPhase | null;
+  cancelled: boolean;
   failure: {
+    checkId: CheckId;
     command: string | null;
     exitCode: number | null;
+    exitCodeSource: 'command' | 'container' | null;  // app crash: container code (up -d was 0)
     failedService: string | null;
-    rawOutputTail: string;   // bounded, NOT yet redacted (C4 redacts)
+    rawOutputTail: string;          // bounded (≤ 200 lines) and NOT redacted; C4 redacts it
     truncated: boolean;
   } | null;
 }
 
-export async function runVerification(
-  options: VerifyOptions,
-  runner: ProcessRunner,
-  onPhase: (phase: ExecutionPhase) => void,
-  signal?: AbortSignal,
-): Promise<VerificationOutcome>
+export async function buildVerifyOptions(workspaceRoot: string, manifest: RuntimeManifest): Promise<VerifyOptions>
+export async function runVerification(options: VerifyOptions, runner: ProcessRunner,
+  onPhase: (phase: ExecutionPhase) => void, signal?: AbortSignal): Promise<VerificationOutcome>
 
-Provide buildVerifyOptions(workspaceRoot, manifest) that is MANIFEST-DRIVEN:
-- infraServices = manifest.services ids other than 'app' (do NOT assume 'db'
-  or PostgreSQL exist — sandbox-sarmad has neither)
-- appContainerPort from the 'app' service ports, else null
-- framework defaults only where the manifest says django, in ONE clearly
-  named object (e.g. DJANGO_DEFAULTS = { testCommand: ['python','manage.py','test'],
-  healthPath: null })
-- healthPath: read .repo2prod/health-endpoint.json if it exists (written by
-  Bob via the /repo2prod skill — task C6). Validate it strictly:
-  { "path": string starting with "/", "method": "GET", "expectStatus": 200,
-    "checks": string[], "source": "existing" | "created-by-bob",
-    "files": string[] }
-  Invalid/missing file -> healthPath null (smoke probe). The file is only a
-  HINT about where to look — it is never evidence; PASS needs an observed 200.
-workspaceRoot must be the currently opened folder passed by the caller —
-never evidence.workspaceRoot (sandbox-sarmad's evidence points at another
-machine). Keep runVerification framework-agnostic.
+Delete the old verifyRuntime(manifest) stub.
 
-Replace the old verifyRuntime(manifest) stub (nothing calls it).
+buildVerifyOptions rules (driven by the manifest, with framework defaults
+kept in ONE place):
+- projectName = deriveComposeProjectName(workspaceRoot).
+- appService = 'app'. infraServices = the manifest services whose id is not
+  'app' (golden fixture: [{ id: 'db', name: 'postgres' }]; sandbox: []).
+  Never assume Postgres exists.
+- appContainerPort = the first port of the manifest's 'app' service, else null.
+- healthTargets: if .repo2prod/health-endpoint.json exists and is valid,
+  add { path, source: 'declared' } first. "Valid" is strict: path is a
+  string starting with "/", method is "GET", expectStatus is 200; ignore
+  other fields. Then add CONVENTIONAL_HEALTH_PATHS = ['/health/', '/healthz']
+  as source 'conventional', skipping any duplicate of the declared path.
+  A missing or invalid file is not an error (C6 isn't implemented yet).
+  Read ONLY that one file under .repo2prod/.
+- testCommand comes from STACK_DEFAULTS, keyed by manifest.stack.framework:
+    django -> ['python', 'manage.py', 'test', '--noinput']
+  (--noinput matters: a leftover test database would otherwise trigger an
+  interactive prompt, which hangs or aborts with no TTY.)
+  Any other framework -> null.
 
 ==================================================
-VERIFICATION ORDER
+PART 3 — VERIFICATION ORDER AND RULES
 ==================================================
+
+Use one ComposeContext { runner, cwd: workspaceRoot, projectName, signal }.
+Do NOT pass composeFile (no -f flag). Compose's own discovery, including
+compose.override.yaml and .env, must match what a developer runs.
+Use findComposeFile only to check that a Compose file exists.
 
 onPhase('BUILDING')
-  check 'docker'   : checkDocker      PASS/FAIL, observed true
-  check 'compose'  : checkCompose + compose file exists
-  check 'build'    : composeBuild exit 0
+  docker  : checkDocker -> PASS / FAIL, with its message as the detail.
+  compose : checkCompose ok AND findComposeFile !== null -> PASS.
+            Otherwise FAIL (use noComposeFileMessage(...) when the file is missing).
+  build   : composeBuild ok -> PASS (detail "built in Ns"). Otherwise FAIL,
+            with the failure's command, exitCode, source 'command' and
+            output tail.
+
 onPhase('STARTING')
-  composeUp
-  (composeUp exit 0 is NOT evidence the app is running.)
-  check 'database' : for each infraServices entry, poll composePs until
-                     health == healthy (or running if no healthcheck) within
-                     readinessMs. If infraServices is empty -> NOT_RUN,
-                     observed false, detail "No infrastructure service in manifest".
-  check 'app'      : app container state == running (not exited/restarting)
-                     for a stability window (still running after ~5s, re-check ps).
-                     If exited: FAIL, failedService 'app', exitCode = container
-                     exit code from ps, command = the `up -d` command,
-                     rawOutputTail = composeLogs app tail (~120 lines).
+  Run composeUp, then composePs.
+  Find the services in the ps rows:
+    app   = the row whose service equals options.appService.
+    infra = the row whose service equals the manifest id; otherwise a row
+            whose image contains the manifest name (e.g. "postgres").
+  database:
+    - infraServices empty -> NOT_RUN, observed false,
+      "No infrastructure service in manifest".
+    - a manifest infra service with no matching row ->
+      FAIL "Manifest expects <name>; Compose has none".
+    - otherwise poll ps every pollInterval, for up to dbReady, until every
+      infra row is "running" with health "healthy" (or "" when it has no
+      healthcheck) -> PASS, e.g. "postgres (db) healthy".
+      Exited, unhealthy, or timed out -> FAIL, with failedService = that
+      service and rawOutputTail = its composeLogs tail (120 lines).
+  app (only if database didn't fail):
+    - composeUp not ok -> FAIL "docker compose up failed", with up's output
+      (source 'command', failedService null).
+    - no app row -> FAIL "Compose has no '<appService>' service".
+    - otherwise poll ps for appStable; the app must stay "running" the
+      whole time. If it becomes "exited", FAIL immediately:
+        detail "app exited with code N during startup"
+        command = the up -d command, exitCode = the container's ExitCode,
+        exitCodeSource 'container', failedService = the app service,
+        rawOutputTail = composeLogs(app, 120).
+      (`up -d` exiting 0 is never evidence that the app runs.)
+
 onPhase('VERIFYING_HEALTH')
-  hostPort = composePort(app, appContainerPort)
-  check 'health'   : if healthPath set: GET http://127.0.0.1:<hostPort><healthPath>
-                       retry with backoff until healthMs;
-                       200 -> PASS; 404 on the explicit path -> FAIL;
-                       5xx / refused / timeout -> FAIL.
-                     if healthPath null (sandbox-sarmad: only /admin/ exists):
-                       smoke probe GET "/" with the same retry;
-                       any HTTP status < 500 (including 404) -> WARN, observed true,
-                       detail "Server responds (HTTP <code>); no explicit health endpoint";
-                       5xx / refused / timeout -> FAIL.
-                       Never PASS without an explicit health endpoint.
-                     On failure include last status/body snippet + app logs tail.
+  Host port: composePort(app, appContainerPort) when appContainerPort is
+  known; otherwise the first publishedPorts entry of the app row (F7).
+  No port -> health FAIL "App publishes no port; cannot probe health".
+  Probe http://127.0.0.1:<hostPort><path> with fetch (built into Node 20).
+  Give each request AbortSignal.timeout(healthRequest), combined with the
+  outer signal via AbortSignal.any. Keep polling until there's a decision or
+  the health window ends. Before each retry, re-check ps. If the app has
+  exited meanwhile -> FAIL "app exited with code N while waiting for health",
+  with its logs.
+  Decide per target, in order:
+    declared path:     200 -> PASS "GET <path> -> 200 (declared)".
+                       any other HTTP status -> FAIL "GET <path> -> HTTP <code>".
+    conventional path: 200 -> PASS "GET <path> -> 200 (conventional path)".
+                       404 -> try the next target.
+                       any other HTTP status -> FAIL.
+    all targets 404:   smoke-probe GET "/". Status below 500 -> WARN, observed
+                       true, "Server responds (HTTP <code>); no health endpoint".
+                       500 or above -> FAIL.
+    no response until the window ends (connection refused or timeout)
+                    -> FAIL "No HTTP response on port <p> within 45s".
+  Inside the window, retry on 503 and on connection errors, because the app
+  may still be booting. Decide immediately on 200, 404 and other 4xx.
+  On a health FAIL, the failure is: command "GET http://127.0.0.1:<port><path>",
+  exitCode null, failedService = app, and rawOutputTail = the last status,
+  the first 500 characters of the body, and composeLogs(app, 120).
+  Never PASS health without an observed 200 from a health path.
+
 onPhase('RUNNING_TESTS')
-  check 'tests'    : composeRun(app, testCommand)
-                     exit 0 -> PASS; non-zero -> FAIL;
-                     testCommand null -> NOT_RUN (observed false)
-                     If output contains "Ran 0 tests" or "NO TESTS RAN" -> NOT_RUN
-                     (observed true, detail "No tests found") regardless of exit
-                     code — never PASS. sandbox-sarmad has no tests.
+  tests:
+    - testCommand null -> NOT_RUN, observed false,
+      "No test command known for this stack".
+    - otherwise run composeRun(app, testCommand):
+        output contains "NO TESTS RAN" or "Ran 0 tests" -> NOT_RUN,
+          observed TRUE, "No tests found" (regardless of exit code);
+        exit 0 -> PASS, detail "Ran N tests" (parse N);
+        non-zero -> FAIL (command, exitCode, source 'command', output tail,
+          failedService = app).
 
-After the first FAIL: every remaining check is NOT_RUN, observed false,
-detail "Skipped: earlier phase failed".
+After the first FAIL, mark every remaining check NOT_RUN, observed false,
+"Skipped: earlier check failed", and stop.
+If the signal is aborted at any point, stop: mark the remaining checks
+NOT_RUN "Cancelled", set cancelled = true, failedPhase null, failure null.
 
-Leave containers RUNNING on success (the demo shows a live app).
-On failure also leave them (useful for inspection); cleanup is a separate
-explicit call — do not auto-prune.
+Detail strings are shown in the UI and saved in run-state.json. Keep them
+short and readable, with no log lines, env values, or connection strings.
+Raw output goes ONLY into failure.rawOutputTail.
 
-Use Node's built-in fetch with AbortSignal.timeout; no new dependencies.
+Leave containers running after success and after failure, for inspection;
+the demo shows a live app. The verifier does no cleanup.
 
 ==================================================
-RULES
+SAFETY
 ==================================================
 
-- observed=true only for checks whose command/HTTP call actually executed.
-- Never PASS because a file exists or config looks right.
-- Never retry the whole pipeline. Polling for readiness inside a phase is fine.
-- Honour the AbortSignal between and within phases.
+Never: docker system/volume/image prune, compose without -p (always go
+through C2), docker compose config, reading .env, printing env. No console
+output in src/. The verifier never writes files (C4 writes diagnostics).
 
 ==================================================
 NO SCOPE EXPANSION
 ==================================================
 
-No vscode import, no state transitions, no diagnostics file writing,
-no redaction (C4), no new dependencies, no readiness percentages.
+No vscode import, no state transitions, no diagnostics files, no redaction
+(C4), no readiness report or overall status (Member A), no percentages, no
+auto-repair, no whole-pipeline retries, no new dependencies.
 
 ==================================================
 COMPILATION / VALIDATION
 ==================================================
 
-1. pnpm compile passes.
-2. No pnpm test.
-3. Inspect: every PASS path is preceded by a real command/HTTP result.
+1. pnpm compile.
+2. There is no pnpm test. Do not invent it.
+3. grep -rn "prune\|compose config" src/  -> comments only, if anything.
+4. grep -n "'docker'" src/execution/verifier.ts  -> nothing (everything goes through C2).
+5. Show every place that sets status 'PASS', and the observed result it
+   depends on.
+6. git diff --stat: only the files listed in scope have changed.
 
 ==================================================
 MANUAL DEVELOPMENT TEST
 ==================================================
 
-Using a throwaway script outside src/ against ~/Desktop/sandbox-sarmad-work:
-1. Expect: docker/compose/build PASS, database NOT_RUN, app FAIL at STARTING
-   with exit code 1 and "unable to open database file" in rawOutputTail,
-   health/tests NOT_RUN. Report the actual VerificationOutcome JSON.
-2. In a SEPARATE scratch copy only (never the baseline), remove the volume
-   line to confirm the healthy path: expect app PASS, health WARN (HTTP 404
-   on "/", no explicit endpoint), tests NOT_RUN ("NO TESTS RAN").
-   Delete that scratch copy afterwards. Do not commit any sandbox change.
-3. composeDown each project afterwards (scoped -p only).
+scripts/verify-smoke.cjs <workspaceDir> [--abort-at STARTING]:
+- requires ../out/execution/verifier.js;
+- builds the manifest by running Member B's compiled analyzer
+  (out/analyzers/runAnalysis.js, runLocalAnalysis). It writes .repo2prod/ in
+  that dir, which is fine;
+- calls buildVerifyOptions and then runVerification with runProcess;
+- prints: the phases seen; one line per check (id / status / observed /
+  detail); and the failure summary (checkId, command, exitCode + source,
+  failedService, and at most 20 lines of rawOutputTail).
+Never print .env or env values. Keep it about 80–120 lines, commented like
+the rest.
+
+Run order (report the actual output of each step):
+0. pnpm compile; scripts/reset-demo-fixture.sh;
+   node scripts/exec-smoke.cjs "$HOME/repo2prod-demos/golden-demo"
+   -> all PASS (it leaves the project down).
+1. Broken fixture: reset, then run verify-smoke on the demo dir. Expect:
+   phases BUILDING -> STARTING; docker/compose/build PASS; database PASS
+   (db healthy); app FAIL "app exited with code 1…"; health and tests
+   NOT_RUN; failure with exitCode 1 (container), failedService app, and a
+   tail containing "port 5432 failed: Connection refused".
+2. Fixed fixture (demo copy ONLY): add `POSTGRES_HOST: db` under
+   services.app.environment and rerun. Expect all four phases, health PASS
+   "GET /health/ -> 200 (conventional path)", and tests PASS "Ran 3 tests".
+3. Declared health, in the fixed demo copy:
+   - write .repo2prod/health-endpoint.json as {"path":"/health/",
+     "method":"GET","expectStatus":200,"checks":["database"],
+     "source":"existing","files":[]} -> health PASS "(declared)";
+   - change "path" to "/nope/" -> health FAIL "GET /nope/ -> HTTP 404",
+     and tests NOT_RUN;
+   - write invalid JSON -> the file is ignored, health falls back to the
+     conventional path, and it's PASS again.
+4. Failing tests: in the fixed demo copy, make one assertion in
+   items/tests.py fail -> tests FAIL at RUNNING_TESTS, with the failing test
+   in the tail. (Demo copy only.)
+5. Cancel: rerun with --abort-at STARTING -> cancelled true, and the
+   remaining checks are NOT_RUN "Cancelled".
+6. Optional: the sandbox copy (~/Desktop/sandbox-sarmad-work, never the
+   original) -> database NOT_RUN, app FAIL, tail contains "unable to open
+   database file". Do not fix it.
+7. Optional: with Docker Desktop stopped -> docker FAIL, and the rest
+   NOT_RUN.
+8. Clean up: take down the repo2prod-golden-demo project with volumes
+   (composeDown in the script, or the CLI with -p), then run
+   scripts/reset-demo-fixture.sh to restore the baseline. Also take down
+   repo2prod-sandbox-sarmad-work if you used it.
 
 ==================================================
 FINAL REPORT
 ==================================================
 
-1. Files created/modified
-2. Final API
-3. Check ids and their PASS/FAIL/NOT_RUN semantics
-4. Where Django defaults live
-5. Timeouts chosen
-6. Observed VerificationOutcome for the failing sandbox and the scratch healthy copy
-7. pnpm compile result
-8. Risks (e.g. port conflicts on 8000, slow first build)
+1. Files changed, and a one-line summary for each C2 follow-up F1–F9
+2. Which ps field provides published ports on v5.5.1 (F7), with a sample
+3. The final verifier API (signatures only)
+4. Check ids and their PASS/FAIL/WARN/NOT_RUN meaning (compact table)
+5. Where the stack defaults and conventional health paths live
+6. Timeouts chosen
+7. Output of exec-smoke (compact) and of each verify-smoke scenario
+8. pnpm compile result and validation checks 3–6
+9. What C4 needs to know about rawOutputTail (size, content)
+10. Risks (e.g. port 8000 busy, slow first build, health window size)
 
 Do not implement anything outside this task.
 ```
@@ -1680,6 +1949,14 @@ Never add global prune commands.
 | C4 | `necromancers_taskNN_redaction_diagnostics.png` |
 | C5 | `necromancers_taskNN_execution_integration.png` |
 
+**Member C sessions so far** (folder `bob_sessions/shiza-asghar/`):
+| Task | File | Bobcoins |
+|---|---|---|
+| C1 | `necromancers_task012_golden_fixture_reset_summary.png` | 5.78 |
+| C2 | `necromancers_task13_fixture_bob_productionize_dryrun_summary.png`: **misnamed**, since the screenshot shows the C2 session. Rename it to `necromancers_task13_process_docker_compose_summary.png`. | 4.82 |
+
+Used so far: about **10.6 / 40**. Plan roughly 5–7 each for C3, C4 and C5, about 1–2 for the fixture dry run, and keep about 8 in reserve for demo runs (`/repo2prod` + repair + CI). The numbering is also inconsistent: `task012` (three digits) vs `task13`. Pick one style (two digits, like `task01`–`task11`) for the remaining files.
+
 Cost savers: one focused session per task; paste bounded logs only; use S2 for small bugs instead of re-running a big prompt; use mocks in tests.
 
 ---
@@ -1753,14 +2030,24 @@ Append new entries here as decisions are made (date — decision — why).
 - 2026-09-26 — Defect = settings default `POSTGRES_HOST=localhost`, not set in compose — most realistic "works on my laptop" version of the preferred defect, and it survives "preserve working config". *To confirm with a real `/repo2prod` dry run.*
 - 2026-09-26 — Health endpoint `/health/` does `SELECT 1` — "container running" must not count as healthy.
 - 2026-09-26 — Compose project `repo2prod-<sanitized basename>` — scoped cleanup, never global prune.
-- 2026-09-26 — Demo workspace lives outside the extension repo (`~/repo2prod-demo`), created by the reset script.
+- 2026-09-26 — Demo workspace lives outside the extension repo, created by the reset script. *Updated 2026-09-27:* it's `~/repo2prod-demos/golden-demo`, with project `repo2prod-golden-demo`, a marker in `.git/`, and a fresh random `.env` per reset.
 - *(pending)* FailureBundle optional fields (gap 1) — awaiting team decision.
 - 2026-09-26 — `resolved-config.json` is optional in `/repo2prod` (main `821338d`). Gap 7 closed.
 - 2026-09-26 — First real end-to-end failure: `sandbox-sarmad`, `sqlite3.OperationalError: unable to open database file` during `migrate`. Root cause is Bob's compose mounting named volume `db_data` onto the file path `/app/db.sqlite3`. **Not fixed manually**; it's the C2–C4 acceptance target. C work is reprioritized to C2 → C3 → C4 → C5, then C1.
 - 2026-09-26 — Verifier is manifest-driven (no hardcoded Postgres). No health endpoint gives health WARN via smoke probe, and no tests gives NOT_RUN.
 - *(pending)* Final demo target: SQLite sandbox failure vs Postgres `localhost` fixture (C1).
 - 2026-09-26 — **New task C6:** the `/repo2prod` skill makes Bob find or create a real health endpoint (`GET /health/`, checks the DB, never always-200, no secrets) and declare it in `.repo2prod/health-endpoint.json`. The verifier probes the declared path, and PASS only comes from an observed 200. The repair skill must not weaken the endpoint. *Pending Member A's approval (skill owner).*
-- *(pending)* Next global Bob task number for Member C.
+- *(pending)* Next global Bob task number for Member C. *Update 2026-09-27:* C1 = task012, C2 = task13 (screenshot misnamed; rename it). Use two-digit numbers from now on.
+- 2026-09-27 — C1 accepted (commit `32e75d1`). Bob's suggestion to tell `/repo2prod` "don't add env vars" is **rejected**, because it would tune the product to preserve our demo bug.
+- 2026-09-27 — C2 accepted after review, with follow-ups F1–F9 (§2B) **folded into C3** instead of a separate Bob session, to save Bobcoins.
+- 2026-09-27 — Verifier design:
+  - fixed check ids `docker, compose, build, database, app, health, tests`;
+  - no `-f` flag, so Compose's own discovery matches a developer's run;
+  - `up -d --remove-orphans`;
+  - the app must stay running for a 5 s stability window;
+  - health order is the declared path (C6 file), then the conventional `/health/`, then `/healthz`, then a smoke probe of `/` (WARN only);
+  - Django tests run as `python manage.py test --noinput`;
+  - "NO TESTS RAN" counts as NOT_RUN (observed).
 
 ---
 
