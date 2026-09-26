@@ -128,3 +128,6 @@ out/
 *.vsix
 *.tsbuildinfo
 .pnpm-debug.log*
+
+# Local manual-test folders (Member B)
+sandbox/

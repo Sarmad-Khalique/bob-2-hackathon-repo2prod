@@ -18,7 +18,7 @@ import {
   resetRunState,
 } from './state';
 import { bobSkillManager } from './bobSkills';
-import type { RunState, FailureBundle } from './types';
+import type { RunState, FailureBundle, Evidence, RuntimeManifest } from './types';
 
 // ---------------------------------------------------------------------------
 // Repo2ProdOrchestrator
@@ -52,6 +52,17 @@ export class Repo2ProdOrchestrator {
     // PREFLIGHT → ANALYZING_LOCAL
     // (Preflight completes deterministically; Member B analysis begins.)
     this.transition(Repo2ProdState.ANALYZING_LOCAL);
+  }
+
+  /**
+   * Called after Member B analysis succeeds.
+   * Stores evidence + manifest on the run state and transitions
+   * ANALYZING_LOCAL → AWAITING_RUNTIME_PLAN_APPROVAL.
+   */
+  completeAnalysis(evidence: Evidence, manifest: RuntimeManifest): void {
+    this.assertCurrentState(Repo2ProdState.ANALYZING_LOCAL);
+    this.state = { ...this.state, evidence, manifest };
+    this.transition(Repo2ProdState.AWAITING_RUNTIME_PLAN_APPROVAL);
   }
 
   /**
