@@ -35,19 +35,29 @@ user-invocable: true
 
 Read the following Repo2Prod state files before doing any work:
 
+**Required:**
+
 - \`.repo2prod/evidence.json\`
 - \`.repo2prod/runtime-manifest.json\`
+
+If either required file does not exist, stop immediately and clearly report
+which file is missing. Do not invent data to substitute for a missing required
+state file.
+
+**Optional:**
+
 - \`.repo2prod/resolved-config.json\`
 
-If any of these files does not exist, stop and report clearly which required
-Repo2Prod state file is missing. Do not invent data to substitute for missing
-state.
+If \`.repo2prod/resolved-config.json\` exists, read it and use it as supplemental
+runtime configuration context. If it does not exist, continue normally — do not
+treat its absence as an error.
 
-Once you have read the state files, perform the following:
+Once you have read the available state files, perform the following:
 
 1. **Validate runtime assumptions** — confirm that the evidence in
    \`.repo2prod/evidence.json\` matches the actual repository structure.
-   Note any discrepancies.
+   Note any discrepancies. Do not assume optional missing configuration is
+   already resolved.
 
 2. **Create or minimally repair the local Docker runtime** — create or update
    only what is needed to make the application run locally in Docker/Compose.
