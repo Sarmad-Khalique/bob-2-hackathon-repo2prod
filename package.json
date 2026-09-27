@@ -8,6 +8,8 @@
   "engines": {
     "vscode": "^1.116.0"
   },
+  "license": "MIT",
+  "icon": "assets/repo2prod-icon.png",
   "categories": [
     "Other"
   ],
