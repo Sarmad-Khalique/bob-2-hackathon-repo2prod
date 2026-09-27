@@ -278,12 +278,35 @@ Requirements:
 
 6. **No cloud deployment.** The workflow must build and verify only.
 
-7. **No unnecessary secrets.** Reference only environment variables that are
-   genuinely required for the verified build/startup steps.
-   - \`user-secret-required\` variables must be declared as GitHub Actions
-     secrets (\`\${{ secrets.NAME }}\`). Do not fabricate values.
-   - Do not copy \`.env\` into the workflow.
-   - Do not expose secret values.
+7. **Environment variable handling in CI — follow RuntimeManifest categories
+   exactly for every env var that is genuinely required by the verified
+   build/startup steps:**
+
+   - **\`generated-local-secret\`** — do **not** use a GitHub repository secret.
+     Generate an ephemeral, CI-local value during the workflow job using a
+     standard tool already available on the GitHub-hosted runner (e.g.
+     \`openssl rand -hex 40\` for a Django SECRET_KEY).  Export it for
+     subsequent steps via \`$GITHUB_ENV\`.  Do not print the value, do not
+     commit it, and do not persist it outside the runner job.
+
+   - **\`user-secret-required\`** — use a GitHub Actions repository/environment
+     secret: \`\${{ secrets.NAME }}\`.  Never fabricate a value.  List each
+     required secret in the final summary so the operator knows what to
+     configure before the workflow can run.
+
+   - **\`safe-inferred\`** — use a safe, explicit CI-local value only when
+     the verified runtime genuinely requires it.  Do not turn it into a
+     repository secret unnecessarily.
+
+   - **\`generated-local-infrastructure\`** — derive or use values from the
+     generated Compose/local CI runtime where possible.  Do not turn them
+     into external repository secrets unless the verified runtime requires it.
+
+   - **\`optional-external\`** — omit the variable entirely unless it is
+     genuinely required to reproduce the verified path.  Do not invent
+     configuration merely because the variable was detected.
+
+   Do not copy \`.env\` into the workflow.  Do not expose secret values.
 
 8. **No vulnerability scanner, dependency upgrades, or SBOM generation.**
 
