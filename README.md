@@ -613,6 +613,13 @@ If a step is not observed, Repo2Prod does not pretend it passed.
 
 ---
 
+## Testing Sandbox
+
+The repository contains a zip file named `testing-sandbox.zip`. It is the same sandbox repo we used for the demo.
+Feel free to use that for testing the repo2prod functionality.
+
+---
+
 ## Repository
 
 GitHub:
