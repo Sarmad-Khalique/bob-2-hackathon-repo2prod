@@ -7,8 +7,10 @@
 
 > **Status for the team (2026-09-27):**
 > - **C1 is done and committed** (`32e75d1`): the golden Django + Postgres fixture and the reset script.
-> - **C2 is done and reviewed:** the process runner and Docker/Compose wrappers. The commit is still pending.
-> - **Next is C3** (the verifier), with the C2 follow-up fixes F1–F9 folded in (§2B).
+> - **C2 is done and committed** (`a144e06`): the process runner and Docker/Compose wrappers.
+> - **C3 is done and committed** (`c24214b`): the verifier, plus C2 follow-ups F1–F9.
+> - **V1–V8 are done** (reviewed 2026-09-27; commit pending). The review found V9–V10 (§2B).
+> - **Next is C4** (redaction + diagnostics), with V9–V10 as its Part 0.
 > - The PR opens once C3–C5 take the golden fixture's real failure all the way to `diagnostics/latest.json` + `DIAGNOSTIC_READY`. `sandbox-sarmad` stays the secondary check.
 
 > **Local code collects facts. Bob interprets and modifies. Local code verifies.**
@@ -90,7 +92,8 @@
 | `src/execution/docker.ts` | ✅ C2 (`checkDocker`). Follow-up F6 is done in C3. |
 | `src/execution/compose.ts` | ✅ C2 (all wrappers). Follow-ups F1, F4, F5, F7, F8 and F9 are done in C3. |
 | `scripts/exec-smoke.cjs` | ✅ C2, 33/33 PASS |
-| `src/execution/verifier.ts` | stub, to be built in **C3** (next) |
+| `src/execution/verifier.ts` | ✅ C3 (`buildVerifyOptions`, `runVerification`), committed `c24214b`. Follow-ups V1–V8 are done in C4. |
+| `scripts/verify-smoke.cjs` | ✅ C3; broken and fixed fixture scenarios pass |
 | `src/execution/diagnostics.ts` | stub, to be built in C4 |
 | `src/core/redaction.ts` | stub, to be built in C4 |
 
@@ -268,10 +271,64 @@ Reviewed 2026-09-27; the commit is pending. Bob session `task13`, 4.82 Bobcoins.
 | F8 | `compose.ts` `composeUp` | A renamed or removed service leaves a stale exited container that confuses `ps`. | Use `up -d --remove-orphans`. |
 | F9 | `compose.ts` | The helper name `runComposeT` is unclear. | Rename it to `runCompose`. |
 
+**Status 2026-09-27:** F1–F9 were all implemented correctly in C3 (commit `c24214b`), verified by reviewing the diff.
+
 Optional nits, not in the prompt:
 - The smoke script is 217 lines against a target of about 120.
 - The `cwd` check reports a permission error as "not found".
 - The one-line `// ─── Section ───` dividers are short enough to keep.
+
+
+### C3: verifier ✅
+Committed `c24214b`. Bob session `task14`, **10.19 Bobcoins**.
+- **API:**
+  - `buildVerifyOptions(workspaceRoot, manifest)` and `runVerification(options, runner, onPhase, signal)`;
+  - `CHECK_IDS` = docker, compose, build, database, app, health, tests;
+  - `VERIFY_TIMEOUTS_MS` (dbReady 60 s, appStable 5 s, health 45 s, per request 3 s, poll 1 s);
+  - `VerificationOutcome` (`failure.exitCodeSource` is `'container'` for an app crash);
+  - `STACK_DEFAULTS.django.testCommand` = `python manage.py test --noinput`;
+  - `CONVENTIONAL_HEALTH_PATHS` = `/health/`, `/healthz`.
+- **Observed:**
+  - broken fixture: app FAIL "app exited with code 1 during startup" at STARTING, and the tail contains `port 5432 failed: Connection refused`;
+  - fixed fixture: health PASS "GET /health/ -> 200 (conventional path)" and tests PASS "Ran 3 tests";
+  - the declared, `/nope/`, invalid-JSON, failing-test and cancel scenarios all behaved as specified.
+- **v5.5.1 detail:** published ports come from the `Publishers` array (IPv4 and IPv6 entries, deduplicated).
+- **Verified by review:** the type-check passes; the commit only touches the 7 in-scope files; the demo copy is back to a clean baseline.
+- **Not actually run:** the sandbox scenario (no `sandbox-sarmad-work` copy exists) and the Docker-stopped scenario ("verified from code").
+- **Correction to Bob's report:** it says a busy port 8000 gives "App publishes no port". In fact `up -d` fails ("port is already allocated"), so the result is app FAIL "docker compose up failed".
+
+### C3 follow-ups (fold into the C4 prompt)
+| # | Where | Issue | Fix |
+|---|---|---|---|
+| V1 | `verifier.ts` app loop (~465) and health loop (~543) | **Crash-loop blind spot.** Only `exited`/`dead` count as a crash. With `restart: unless-stopped` (common in Bob-generated Compose files), a crashing app shows `restarting` and passes as "stable". Health then times out with a misleading "No HTTP response". | Treat `restarting` as FAIL ("app is restart-looping, last exit code N"); require `running` at the end of the window. |
+| V2 | db loop (~339), app loop (~451), port fallback (~509) | **F1's `ps` error is never read.** A transient `ps` failure is reported as "Compose has no 'app' service" or "Manifest expects postgres; Compose has none". | If `!psResult.ok`, retry until the deadline, then FAIL with `psResult.error`. |
+| V3 | health loop (~594-608, ~652) | A health endpoint that keeps answering 503 ends as "No HTTP response ... within 45s". Also, a declared path fails immediately on 503 instead of retrying. | Retry 503 for declared and conventional paths; on timeout say "GET <path> -> HTTP 503 for 45s" when a status was seen. |
+| V4 | db failure logs (~379, ~406) | Logs are fetched with the manifest id (`db`) even when the service was matched by image (e.g. Bob named it `postgres`), so the diagnostic has no logs. | Use the matched `row.service`. |
+| V5 | fetch catch (~582) | An unknown fetch error is reported as **Cancelled** even when nobody cancelled. | Return "cancel" only if `signal?.aborted`; otherwise treat it as a connection error and retry. |
+| V6 | ~191, ~531/625/646/679 | Dead code: `isRunningOk` is unused, and `all404` is set but never read (its `void` comment wrongly says it's used for flow control). | Remove both. |
+| V7 | compose check (~282) | The `compose` check detail is raw stderr, which ends up in the UI and run-state. | Use a fixed short message and put stderr in `rawOutputTail`. |
+| V8 | `scripts/verify-smoke.cjs:129` | It prints the **first** 20 lines of `rawOutputTail`, but the root-cause line is at the end. | Print the last 20. |
+
+Nits: a missing app row gives `exitCodeSource: 'command'` with `exitCode: null`; the tests FAIL detail could include Django's `FAILED (failures=N)`.
+
+**Status 2026-09-27:** V1–V8 were all applied in a separate Bob session (only `verifier.ts` and `verify-smoke.cjs` changed; type-check OK). Verified by reading the code:
+- `restarting` counts as a crash;
+- `ps` errors are retried, and no longer reported as missing services;
+- 503 is retried, with the last status tracked per path;
+- the smoke probe only runs when every conventional path returned 404;
+- logs use `row.service`;
+- a cancel is only reported on a real abort;
+- dead code is removed;
+- the compose detail is fixed text;
+- the smoke script prints the last 20 lines.
+
+Observed test runs: broken fixture → app FAIL exit 1; `restart: unless-stopped` → "restart-looping"; healthy regression → all 7 PASS.
+
+### Verifier follow-ups found in the V1–V8 review (Part 0 of the C4 prompt)
+| # | Where | Issue | Fix |
+|---|---|---|---|
+| V9 | `verifier.ts` app loop (~497) and health loop (~591) | While a container is `restarting`, `compose ps` reports **ExitCode 0**. So the detail says "restart-looping (last exit code 0)" and the failure stores `exitCode 0` from the container, which is false (the app crashed with 1) and misleading for Bob. | For `restarting`: detail "app is restart-looping (it keeps crashing)", with `exitCode` and `exitCodeSource` both `null`. |
+| V10 | database failure branches (~402, ~430); "Could not read container status" / missing app row (~487, ~520) | `failedService` uses the manifest id even when a Compose row was matched by image. `exitCodeSource` is `'command'` while `exitCode` is `null`. | Use `row.service` when matched; `exitCodeSource` must be `null` whenever `exitCode` is `null`. |
 
 ---
 
@@ -1371,9 +1428,9 @@ Do not implement anything outside this task.
 
 ---
 
-### 8.4 — C4: Redaction + diagnostics / FailureBundle
+### 8.4 — C4: Redaction + diagnostics / FailureBundle (+ verifier Part 0)
 
-> **Before running:** agree gap 1 with the team. If the shared-type change is **not** approved, delete the "OPTIONAL SHARED-TYPE EXTENSION" section from the prompt.
+> Updated 2026-09-27 after the V1–V8 review. Part 0 applies V9–V10. The failure-report type (FailureBundle) stays **unchanged**, because gap 1 isn't approved; the extra context goes in a header inside `redactedExcerpt`. To save Bobcoins, it uses ONE verification run: attempt 1 is simulated from the same outcome.
 
 ```text
 Read @AGENTS.md completely before making any changes.
@@ -1381,185 +1438,279 @@ Read @AGENTS.md completely before making any changes.
 I am Member C of Repo2Prod.
 
 This is Task C4: implement secret redaction and bounded FailureBundle
-diagnostics persisted to .repo2prod/diagnostics/latest.json.
+diagnostics, persisted to .repo2prod/diagnostics/latest.json. First, make
+two tiny verifier follow-ups (Part 0).
 
 IMPORTANT CONTEXT
 
-C2 (process/docker/compose) and C3 (runVerification in
-src/execution/verifier.ts) are complete. runVerification returns a
-VerificationOutcome with failedPhase and a failure object containing
-command, exitCode, failedService, rawOutputTail (bounded, NOT redacted),
-truncated.
+This follows the Team Execution Plan v0.4, section 11, task C4:
+"A FailureBundle should include only useful evidence: phase, command, exit
+code, failed service, bounded/redacted log tail, attempt number, relevant
+files, and a manifest reference. Persist .repo2prod/diagnostics/latest.json.
+No full logs. No .env values. No tokens/passwords. Bounded size. Attempt 2
+may include the previous repair outcome."
+Done when: a real fixture failure produces a safe and useful diagnostic
+that /repo2prod-repair can consume.
 
-Bob's /repo2prod-repair skill (templates/bob-skills/repo2prod-repair/SKILL.md)
-reads:
-  .repo2prod/runtime-manifest.json
-  .repo2prod/diagnostics/latest.json
-and treats the diagnostic as ground truth. So latest.json must be SMALL,
-SAFE, and USEFUL.
+Done and committed (do NOT modify, except Part 0):
+- C1 fixture + scripts/reset-demo-fixture.sh ($HOME/repo2prod-demos/golden-demo,
+  project repo2prod-golden-demo).
+- C2 process runner + compose wrappers (src/execution/processRunner.ts,
+  docker.ts, compose.ts; findComposeFile is reusable).
+- C3 verifier + fixes V1–V8 (src/execution/verifier.ts). runVerification
+  returns a VerificationOutcome:
+    result.checks: CheckResult[]       (the failing check has status FAIL)
+    failedPhase: 'BUILDING'|'STARTING'|'VERIFYING_HEALTH'|'RUNNING_TESTS'|null
+    failure: { checkId, command, exitCode,
+               exitCodeSource: 'command'|'container'|null,
+               failedService, rawOutputTail (≤200 lines, NOT redacted),
+               truncated } | null
 
-Real target: ~/Desktop/sandbox-sarmad-work (Django + SQLite; app exits at
-STARTING with "sqlite3.OperationalError: unable to open database file"
-because compose mounts named volume db_data onto the file /app/db.sqlite3).
-Do NOT fix it. The bundle for it should name phase STARTING, failed service
-app (exited, code 1), relevant files compose.yaml, Dockerfile, .dockerignore,
-config/settings.py, and keep the Django traceback tail.
-A real .env exists there: never read it, never run `docker compose config`.
+Who reads the output:
+- Bob's /repo2prod-repair skill reads .repo2prod/runtime-manifest.json and
+  .repo2prod/diagnostics/latest.json, and treats the diagnostic as ground
+  truth. So it must be SMALL, SAFE, FACTUAL and USEFUL.
+- Member A's orchestrator.recordFailure(bundle) stores the bundle in
+  .repo2prod/run-state.json, so the excerpt is persisted there too.
+- The attempt number comes from orchestrator.repairAttemptsUsed():
+  0 for the first failure, then 1, then 2.
 
-Shared type (src/core/types.ts):
-  FailureBundle { attempt, phase, command, exitCode, redactedExcerpt, truncated }
-Schema: schemas/diagnostics.schema.json (additionalProperties: false).
+Frozen contract (DO NOT CHANGE; the team has not approved changes):
+  src/core/types.ts: FailureBundle { attempt: number; phase: Repo2ProdState;
+    command: string | null; exitCode: number | null;
+    redactedExcerpt: string; truncated: boolean }
+  schemas/diagnostics.schema.json: exactly those 6 keys, additionalProperties false.
+Extra context (failed service, relevant files, manifest reference, previous
+attempt) goes into a short HEADER at the top of redactedExcerpt.
 
-Member A's orchestrator.recordFailure(bundle) stores the bundle in
-run-state and moves to DIAGNOSTIC_READY. The attempt number comes from
-orchestrator.repairAttemptsUsed().
+Real failure text to preserve (it's the evidence Bob needs):
+  golden fixture: 'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
+  sandbox:        'sqlite3.OperationalError: unable to open database file'
+
+Secrets:
+- The demo workspace has a real .env (random SECRET_KEY and POSTGRES_PASSWORD,
+  generated by openssl). Repo2Prod product code must NEVER read .env.
+- So `extraSecrets` is empty today (it exists for future locally generated
+  values). Pattern-based redaction is the safety net.
 
 ==================================================
-OWNERSHIP / SCOPE
+SCOPE
 ==================================================
 
-Modify:
-  src/core/redaction.ts        (stub assigned to Member C)
-  src/execution/diagnostics.ts
-Do NOT modify orchestrator/state/commands/analyzers.
+FILES TO MODIFY / CREATE (nothing else):
+  src/execution/verifier.ts        Part 0 only (V9, V10)
+  src/core/redaction.ts            replace the stub (owned by Member C)
+  src/execution/diagnostics.ts     replace the stub (nothing calls it yet)
+  scripts/verify-smoke.cjs         add a --diagnostics option (see the test)
+  scripts/diagnostics-check.cjs    NEW, small (~60–90 lines): redaction +
+                                   validator self-check using FAKE secrets only
+  scripts/README.md                ONE line for diagnostics-check.cjs
+
+FILES YOU MUST NOT TOUCH:
+  src/core/types.ts, src/core/state.ts (import Repo2ProdState only),
+  src/core/orchestrator.ts, src/commands/**, src/webview/**, src/analyzers/**,
+  src/execution/compose.ts, processRunner.ts, docker.ts,
+  schemas/**, templates/**, test-fixtures/**, docs/**, bob_sessions/**,
+  package.json, pnpm-lock.yaml, tsconfig.json
 
 ==================================================
-GOAL
+PART 0 — TWO TINY VERIFIER FOLLOW-UPS (do first)
 ==================================================
 
-Turn a real observed failure into a bounded, redacted FailureBundle and
-persist it for Bob.
+V9 Restart-loop exit code. Observed: while a container is "restarting",
+   `docker compose ps` reports ExitCode 0, so the verifier says
+   "app is restart-looping (last exit code 0)" and stores exitCode 0 with
+   source 'container'. That is false (the app crashed with code 1) and would
+   mislead Bob. For the restarting case, in both the app loop and the
+   health-loop re-check: use the detail "app is restart-looping (it keeps
+   crashing)", and set exitCode null and exitCodeSource null. Keep the logs
+   tail. The "exited" case is unchanged (its ExitCode is correct).
+V10 Consistent failure fields:
+   - Set failedService to the matched Compose service name (row.service)
+     when a row matched, else the manifest id (database failure branches).
+   - Wherever exitCode is null, exitCodeSource must also be null (e.g. the
+     "Could not read container status" and "Compose has no '<app>' service"
+     branches).
+Keep these changes minimal. Do not touch anything else in verifier.ts.
+
+==================================================
+NO REDUNDANT WORK
+==================================================
+
+- Reuse findComposeFile (compose.ts) and the shared types. Don't redeclare
+  FailureBundle.
+- Validate the bundle with ONE small hand-written validator that mirrors
+  schemas/diagnostics.schema.json. No new dependencies (no ajv).
+- One limits constant. One header builder. No extra log files, and no
+  full-log archives.
+- Don't re-test C1–C3. Run verification ONCE in the manual test (below).
+
+==================================================
+COMMENTS AND STYLE
+==================================================
+
+Same rules as before: 1–3 line file header; one short /** */ line per
+export; inline comments only for the non-obvious "why" (e.g. why we redact
+before bounding, why env names stay visible, why the header states facts
+only, why restart-loop exit codes are not reported). 1 line each, 2 max.
+No banners.
 
 ==================================================
 redaction.ts
 ==================================================
 
+export const REDACTED = '[REDACTED]';
 export function redactText(input: string, extraSecrets?: readonly string[]): string
 
-Replace with "[REDACTED]":
-- any literal in extraSecrets (length >= 4), longest first
-- URL credentials: scheme://user:pass@host  -> scheme://user:[REDACTED]@host
-- KEY=VALUE / KEY: VALUE where KEY matches
-  /(SECRET|PASSWORD|PASSWD|TOKEN|API_?KEY|PRIVATE_?KEY|CREDENTIAL|AUTH)/i
-  (keep the key name, redact the value)
-- Authorization: Bearer <token> / Basic <b64>
-- PEM private key blocks
-- common token shapes: ghp_/gho_/github_pat_, sk-..., AKIA[0-9A-Z]{16},
-  xox[bap]-..., long base64/hex strings (>= 32 chars) that follow
-  "key", "secret" or "token" words
-Keep env var NAMES visible (they are safe and useful to Bob).
-Pure function, no I/O.
-
-Also export:
-export function boundText(input: string, maxLines: number, maxBytes: number)
-  : { text: string; truncated: boolean }
-  keeps the TAIL; defaults 120 lines / 12 KiB.
+Pure, idempotent (redactText(redactText(x)) === redactText(x)), no I/O.
+Rules, in order:
+1. extraSecrets: literal values with length >= 6, longest first, all
+   occurrences (escape regex characters).
+2. PEM private-key blocks -> keep the BEGIN/END lines, redact the body.
+3. URL credentials: scheme://user:pass@host -> scheme://user:[REDACTED]@host
+4. Authorization headers: "Bearer <x>" / "Basic <x>" -> keep the scheme word.
+5. Key/value pairs whose KEY matches
+   /(SECRET|PASSWORD|PASSWD|PWD|TOKEN|API[_-]?KEY|PRIVATE[_-]?KEY|CREDENTIAL|AUTH)/i
+   with a separator: KEY=value, KEY = 'value', KEY: value, "key": "value",
+   and DSN style password=value. Keep the key, redact the value.
+   Prose without a separator must survive, e.g.
+   'password authentication failed for user "inventory"'.
+6. Known token shapes anywhere: ghp_/gho_/ghu_/ghs_/github_pat_…,
+   sk-… (20+ chars), AKIA[0-9A-Z]{16}, xox[abpr]-…, JWTs (eyJ….….…).
+Keep env var NAMES, hostnames, ports, file paths and error class names
+visible; Bob needs them to diagnose.
 
 ==================================================
 diagnostics.ts
 ==================================================
 
-export function createFailureBundle(input: {
-  attempt: number;
-  phase: Repo2ProdState;
-  command: string | null;
-  exitCode: number | null;
-  rawOutput: string;
+export const DIAGNOSTICS_LIMITS = { maxLines: 150, maxBytes: 12_288 };
+
+export async function createFailureBundle(input: {
+  attempt: number;                         // orchestrator.repairAttemptsUsed()
+  outcome: VerificationOutcome;            // must contain a failure
+  workspaceRoot: string;
+  previous?: { attempt: number; phase: string } | null;
   extraSecrets?: readonly string[];
-}): FailureBundle
-  - redact FIRST, then bound (so a secret split by truncation is still caught
-    — or bound generously, redact, then bound again; explain choice)
-  - redact the command string too
+}): Promise<FailureBundle>
+  - Throw "No failure to record" if outcome.failure or failedPhase is null.
+  - phase = the Repo2ProdState value for failedPhase (explicit mapping, no casts).
+  - command = redactText(failure.command); exitCode = failure.exitCode.
+  - redactedExcerpt = header + log tail:
+      Repo2Prod diagnostic (attempt <n>)
+      Phase: <PHASE>
+      Failed check: <checkId> - <failing CheckResult.detail>
+      Failed service: <service | none>
+      Command: <redacted command | none>
+      Exit code: <line built from exitCodeSource>
+        'container' -> "<n> (container exit code; the command itself exited 0)"
+        'command'   -> "<n> (command exit code)"
+        null        -> "n/a"
+      Relevant files: <existing files only, comma-separated | none (Docker/Compose environment problem)>
+      Runtime manifest: .repo2prod/runtime-manifest.json
+      Previous failure: attempt <n> at <PHASE> (see .repo2prod/diagnostics/attempt-<n>.json)  <- only when previous is given
+      --- log tail (redacted) ---
+      <tail>
+    Relevant files by checkId, including ONLY files that exist, and never .env*:
+      build:                  Dockerfile, .dockerignore, <compose file>, requirements.txt, pyproject.toml, package.json
+      database / app:         <compose file>, Dockerfile, .dockerignore
+      health:                 <compose file>, Dockerfile, .repo2prod/health-endpoint.json
+      tests:                  <compose file>, Dockerfile
+      docker / compose:       none
+    Facts only: no guesses, no "likely cause" text. Bob does the diagnosis.
+  - Order: redact the whole raw tail and header values FIRST, then bound.
+    Bound so the whole excerpt fits DIAGNOSTICS_LIMITS: keep the header
+    intact and keep the END of the tail.
+  - truncated = failure.truncated OR bounding removed lines/bytes.
 
-export async function writeFailureBundle(workspaceRoot, bundle): Promise<string>
-  - validates shape against the FailureBundle contract before writing
-  - writes .repo2prod/diagnostics/latest.json (UTF-8, pretty)
-  - also writes .repo2prod/diagnostics/attempt-<n>.json so attempt 2 can
-    reference attempt 1
-  - creates the directory if missing
-  - clear error: "Repo2Prod: failed to write .repo2prod/diagnostics/latest.json: <reason>"
+export function validateFailureBundle(value: unknown): asserts value is FailureBundle
+  Mirrors the schema exactly (6 required keys, no extra keys, types,
+  attempt integer >= 0). Error: "Failure bundle is invalid: <all problems>".
 
-export async function clearDiagnostics(workspaceRoot): Promise<void>
-  - deletes only files inside .repo2prod/diagnostics/ (for a new run)
+export async function writeFailureBundle(workspaceRoot: string, bundle: FailureBundle): Promise<string>
+  Validate, then write (UTF-8, pretty JSON + trailing newline) to
+  .repo2prod/diagnostics/attempt-<attempt>.json and
+  .repo2prod/diagnostics/latest.json (same content). Create the dir if
+  needed. Return the latest.json path.
+  Error: "Repo2Prod: failed to write .repo2prod/diagnostics/latest.json: <reason>"
 
-redactedExcerpt should begin with a short header block that helps Bob
-without adding schema fields, e.g.:
-  Phase: STARTING
-  Failed service: app
-  Command: docker compose -p repo2prod-demo up -d
-  Relevant files: compose.yaml, Dockerfile, config/settings.py
-  Manifest: .repo2prod/runtime-manifest.json
-  --- log tail ---
-  ...
-
-==================================================
-OPTIONAL SHARED-TYPE EXTENSION (only if the team approved it)
-==================================================
-
-Add OPTIONAL fields to FailureBundle in src/core/types.ts AND
-schemas/diagnostics.schema.json in the same change:
-  failedService?: string | null
-  relevantFiles?: string[]
-  manifestRef?: string
-  previousOutcome?: string | null
-Keep existing required fields unchanged. Update every consumer.
-If not approved, skip this section and use the header block above.
-
-==================================================
-SECRET RULES (non-negotiable)
-==================================================
-
-- Never read .env files.
-- Never include env VALUES; names are fine.
-- No full logs; bounded tails only.
-- Nothing in latest.json may contain the fixture's local DB password or
-  SECRET_KEY value — test this explicitly.
+export async function clearDiagnostics(workspaceRoot: string): Promise<void>
+  Deletes only *.json files directly inside .repo2prod/diagnostics/.
+  No recursion, nothing else. A missing dir is fine.
 
 ==================================================
-NO SCOPE EXPANSION
+SAFETY
 ==================================================
 
-No LLM calls, no vscode import, no state transitions, no new dependencies,
-no log shipping, no full log archives.
+No .env reads in src/. No vscode import. No state transitions (C5/Member A).
+No console output in src/. Never write anything outside
+.repo2prod/diagnostics/.
 
 ==================================================
-COMPILATION / VALIDATION
+VALIDATION
 ==================================================
 
-1. pnpm compile passes.
+1. pnpm compile
 2. No pnpm test.
-3. Self-check examples (in the report) showing redactText on:
-   postgres://repo2prod:repo2prod-local-dev@db:5432/repo2prod
-   SECRET_KEY=abc123...  |  Authorization: Bearer xyz  |  a PEM block
-   and that "POSTGRES_HOST" / "connection refused" /
-   "sqlite3.OperationalError: unable to open database file" text survives.
+3. grep -rn "\.env" src/core/redaction.ts src/execution/diagnostics.ts -> comments only
+4. git diff --stat: only the files in scope.
 
 ==================================================
-MANUAL DEVELOPMENT TEST
+MANUAL TEST (run ONLY these; keep the report compact)
 ==================================================
 
-Against ~/Desktop/sandbox-sarmad-work: run runVerification, build the
-bundle (extraSecrets empty — Repo2Prod does not know .env values), write it,
-then:
-  cat ~/Desktop/sandbox-sarmad-work/.repo2prod/diagnostics/latest.json
-Confirm: under ~12 KiB, phase STARTING, contains "unable to open database
-file", contains no SECRET_KEY value. Also append a fake line
-"SECRET_KEY=abcd1234efgh5678" to a test string and show it is redacted.
-(If the C1 Postgres fixture exists later, repeat there with extraSecrets =
-its local DB password.)
+Docker Desktop must be running.
+0. pnpm compile; scripts/reset-demo-fixture.sh
+1. node scripts/diagnostics-check.cjs -> one PASS/FAIL line per case, FAKE values only:
+   redacted: postgres://inventory:s3cretPass9@db:5432/inventory (host/port kept),
+     SECRET_KEY=abcd1234efgh5678ijkl, SECRET_KEY = 'django-insecure-xyz123',
+     {"password": "hunter22x"}, password=hunter22x host=db,
+     Authorization: Bearer abc.def.ghi, a PEM private-key block,
+     ghp_ + 36 chars, AKIAABCDEFGHIJKLMNOP, an extraSecrets literal
+   survive unchanged: POSTGRES_HOST,
+     'connection to server at "127.0.0.1", port 5432 failed: Connection refused',
+     'sqlite3.OperationalError: unable to open database file',
+     'password authentication failed for user "inventory"'
+   idempotence holds; validateFailureBundle rejects an extra key and a
+   string exitCode (print both error messages).
+   Header check with a fake outcome whose exitCodeSource is null ->
+   "Exit code: n/a".
+2. Broken fixture, ONE verification run:
+   node scripts/verify-smoke.cjs "$HOME/repo2prod-demos/golden-demo" --diagnostics
+   On failure, from that same outcome, the script:
+   a) writes attempt 0 (createFailureBundle + writeFailureBundle);
+   b) writes attempt 1 with previous { attempt: 0, phase } (simulates the
+      next failure without re-running Docker);
+   c) prints: the latest.json size in bytes, the attempt-1 header lines, the
+      LAST 10 excerpt lines, whether latest.json equals attempt-1.json,
+      and a leak check;
+   d) calls clearDiagnostics and prints the dir listing before/after.
+   Leak check: the SCRIPT (never src/) reads the demo .env and checks that
+   none of its values appear in latest.json. Print ONLY "leak check: PASS"
+   or "FAIL"; never print the values.
+   Expect: size <= 12 KiB, Phase STARTING, "Failed check: app - app exited
+   with code 1 during startup", "Exit code: 1 (container exit code…)",
+   Relevant files: compose.yaml, Dockerfile, .dockerignore,
+   "Previous failure: attempt 0 at STARTING", a tail containing
+   "port 5432 failed: Connection refused", latest.json == attempt-1.json,
+   leak check PASS, and only diagnostics files removed by clearDiagnostics.
+3. Clean up: docker compose -p repo2prod-golden-demo down -v --remove-orphans,
+   then scripts/reset-demo-fixture.sh.
+Part 0 (V9, V10) is verified by showing the changed code; no extra Docker run.
 
 ==================================================
-FINAL REPORT
+FINAL REPORT (compact; no full file dumps)
 ==================================================
 
-1. Files modified
-2. Redaction patterns list
-3. Bounding limits and order (redact vs bound)
-4. Example latest.json from the real failure
-5. Proof no secrets present
-6. Whether the shared type was extended
-7. pnpm compile result
-8. Risks
+1. Files changed
+2. Part 0: the V9/V10 changed lines (short snippets)
+3. Exported API of redaction.ts and diagnostics.ts (signatures only)
+4. Redaction rules, and any cases that needed special handling
+5. The real attempt-1 header + last 5 tail lines from step 2
+6. diagnostics-check results (counts + any FAIL)
+7. Leak check result, latest.json size, and the clearDiagnostics listing
+8. pnpm compile and git diff --stat
+9. Notes for C5 (what the command layer must call, and in which order)
 
 Do not implement anything outside this task.
 ```
@@ -1954,8 +2105,15 @@ Never add global prune commands.
 |---|---|---|
 | C1 | `necromancers_task012_golden_fixture_reset_summary.png` | 5.78 |
 | C2 | `necromancers_task13_fixture_bob_productionize_dryrun_summary.png`: **misnamed**, since the screenshot shows the C2 session. Rename it to `necromancers_task13_process_docker_compose_summary.png`. | 4.82 |
+| C3 | `necromancers_task14_verification_engine_summary.png` | 10.19 |
 
-Used so far: about **10.6 / 40**. Plan roughly 5–7 each for C3, C4 and C5, about 1–2 for the fixture dry run, and keep about 8 in reserve for demo runs (`/repo2prod` + repair + CI). The numbering is also inconsistent: `task012` (three digits) vs `task13`. Pick one style (two digits, like `task01`–`task11`) for the remaining files.
+Used so far: about **20.8 / 40**, leaving roughly **19**. C3 cost twice the plan, because the prompt was long (context reached 110k tokens) and there were many smoke scenarios. Plan from here:
+- C4 ≈ 4–5 (tight prompt; V1–V8 folded in);
+- C5 ≈ 4–5;
+- fixture `/repo2prod` dry run ≈ 1–2;
+- about 6 kept for demo runs (`/repo2prod` + up to 2 repairs + CI).
+
+Keep prompts shorter, ask for only the essential smoke scenarios, and use S2 (small debug) instead of big re-runs. The numbering is also inconsistent: `task012` (three digits) vs `task13`. Pick one style (two digits, like `task01`–`task11`) for the remaining files.
 
 Cost savers: one focused session per task; paste bounded logs only; use S2 for small bugs instead of re-running a big prompt; use mocks in tests.
 
@@ -2048,6 +2206,10 @@ Append new entries here as decisions are made (date — decision — why).
   - health order is the declared path (C6 file), then the conventional `/health/`, then `/healthz`, then a smoke probe of `/` (WARN only);
   - Django tests run as `python manage.py test --noinput`;
   - "NO TESTS RAN" counts as NOT_RUN (observed).
+- 2026-09-27 — C3 accepted (commit `c24214b`), with follow-ups V1–V8 (§2B) **folded into C4**. The main one is V1: a `restarting` app must count as a crash, because Bob-generated Compose files often use `restart: unless-stopped`.
+- 2026-09-27 — Bobcoin budget is tight (about 19 left). C4/C5 prompts must be shorter, with fewer scenarios.
+- 2026-09-27 — V1–V8 accepted (separate Bob session, at the user's request). V9 (don't report a restart-loop exit code, since `ps` shows 0) and V10 (consistent `failedService`/`exitCodeSource`) are folded into C4 Part 0.
+- 2026-09-27 — C4 keeps FailureBundle unchanged (gap 1 not approved). Header inside `redactedExcerpt`; diagnostics files are `attempt-<n>.json` + `latest.json`; limits 150 lines / 12 KiB; redact first, then bound.
 
 ---
 
