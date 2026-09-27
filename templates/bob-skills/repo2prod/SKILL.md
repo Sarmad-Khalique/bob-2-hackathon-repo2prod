@@ -38,6 +38,17 @@ Once you have read the available state files, perform the following:
    - `compose.yaml`
    - `.env.example`
 
+   When creating or updating `.dockerignore`, ensure it contains at least
+   these three entries (preserve all existing rules, add only what is missing):
+
+   ```
+   .repo2prod/
+   .bob/
+   .git/
+   ```
+
+   These paths must never enter the Docker build context.
+
 3. **Ensure a health endpoint exists**
    1. Look for an existing health/readiness endpoint in the application
       (e.g. routes or views named health, healthz, ready, status, ping).

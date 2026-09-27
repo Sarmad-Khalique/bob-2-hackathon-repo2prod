@@ -16,6 +16,7 @@
 import * as vscode from 'vscode';
 import { orchestrator } from '../core/orchestrator';
 import { MAX_REPAIR_ATTEMPTS } from '../core/state';
+import { ensureRepo2ProdGitIgnore } from '../core/gitignore';
 import { runLocalAnalysis } from '../analyzers/runAnalysis';
 import { openPlanPanel, updatePlanPanel, closePlanPanel } from '../webview/panel';
 import { toPlanViewData } from '../webview/planView';
@@ -39,6 +40,17 @@ export function registerStartProductionization(context: vscode.ExtensionContext)
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         void vscode.window.showErrorMessage(`Repo2Prod: Failed to start — ${message}`);
+        return;
+      }
+
+      // Apply .gitignore hygiene immediately after workspace validation,
+      // before analysis begins. Fail loudly if the write is not possible.
+      try {
+        ensureRepo2ProdGitIgnore(workspaceRoot);
+      } catch (err) {
+        orchestrator.fail();
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showErrorMessage(`Repo2Prod: ${message}`);
         return;
       }
 
