@@ -482,9 +482,10 @@ export async function runVerification(
 
     const appRow = findAppRow(psResult.services, appService);
     if (!appRow) {
+      // V10: exitCode null → exitCodeSource must also be null.
       appCheck = makeCheck('app', 'FAIL', true, `Compose has no '${appService}' service`);
       appFailure = {
-        checkId: 'app', command: upResult.command, exitCode: null, exitCodeSource: 'command',
+        checkId: 'app', command: upResult.command, exitCode: null, exitCodeSource: null,
         failedService: appService, rawOutputTail: '', truncated: false,
       };
       break;
@@ -494,16 +495,19 @@ export async function runVerification(
     if (crash) {
       const logsResult = await composeLogs(ctx, appService, 120);
       const logText = logsResult.ok ? logsResult.run.stdout : '';
+      // V9: restarting containers report ExitCode 0 in `ps`; that 0 is false evidence.
+      // The real exit code is unknown — report null so Bob is not misled.
       const detail = crash === 'restarting'
-        ? `app is restart-looping (last exit code ${appRow.exitCode ?? '?'})`
+        ? 'app is restart-looping (it keeps crashing)'
         : `app exited with code ${appRow.exitCode ?? '?'} during startup`;
       appCheck = makeCheck('app', 'FAIL', true, detail);
       appFailure = {
         checkId: 'app',
         command: upResult.command,
-        exitCode: appRow.exitCode,
-        exitCodeSource: 'container', // up -d was 0; the container itself crashed
-        failedService: appService,
+        exitCode: crash === 'restarting' ? null : appRow.exitCode,
+        exitCodeSource: crash === 'restarting' ? null : 'container',
+        // V10: use the matched row's service name as failedService.
+        failedService: appRow.service,
         rawOutputTail: tailLines(logText, 120),
         truncated: logsResult.run?.stdoutTruncated ?? false,
       };
@@ -515,9 +519,10 @@ export async function runVerification(
 
   if (appCheck === null) {
     if (!appHadSuccessfulPs) {
+      // V10: exitCode null → exitCodeSource must also be null.
       appCheck = makeCheck('app', 'FAIL', true, 'Could not read container status');
       appFailure = {
-        checkId: 'app', command: upResult.command, exitCode: null, exitCodeSource: 'command',
+        checkId: 'app', command: upResult.command, exitCode: null, exitCodeSource: null,
         failedService: appService, rawOutputTail: lastAppPsError ?? '', truncated: false,
       };
     } else {
@@ -588,13 +593,17 @@ export async function runVerification(
       if (midRow && crash) {
         const logsResult = await composeLogs(ctx, appService, 120);
         const logText = logsResult.ok ? logsResult.run.stdout : '';
+        // V9: restarting containers report ExitCode 0; that is false evidence.
         const detail = crash === 'restarting'
-          ? `app is restart-looping (last exit code ${midRow.exitCode ?? '?'})`
+          ? 'app is restart-looping (it keeps crashing)'
           : `app exited with code ${midRow.exitCode ?? '?'} while waiting for health`;
         healthCheck = makeCheck('health', 'FAIL', true, detail);
         healthFailure = {
           checkId: 'health', command: `GET http://127.0.0.1:${hostPort}${healthTargets[0]?.path ?? '/'}`,
-          exitCode: midRow.exitCode, exitCodeSource: 'container', failedService: appService,
+          exitCode: crash === 'restarting' ? null : midRow.exitCode,
+          exitCodeSource: crash === 'restarting' ? null : 'container',
+          // V10: use the matched row's service name as failedService.
+          failedService: midRow.service,
           rawOutputTail: tailLines(logText, 120),
           truncated: logsResult.run?.stdoutTruncated ?? false,
         };

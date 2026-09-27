@@ -4,6 +4,10 @@
 
 Dev-only smoke test for `src/execution/verifier.ts` — runs after `pnpm compile` against any demo workspace; prints phases, per-check results, and the failure summary.
 
+## diagnostics-check.cjs
+
+Self-check for `src/core/redaction.ts` and `src/execution/diagnostics.ts` — runs after `pnpm compile` using fake secrets only; prints one PASS/FAIL line per case and validates the `validateFailureBundle` error messages.
+
 ## exec-smoke.cjs
 
 Dev-only smoke test for `src/execution/*` — runs after `pnpm compile` against the golden-demo fixture; prints a `PASS`/`FAIL` line per step.

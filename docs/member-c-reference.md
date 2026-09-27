@@ -9,8 +9,9 @@
 > - **C1 is done and committed** (`32e75d1`): the golden Django + Postgres fixture and the reset script.
 > - **C2 is done and committed** (`a144e06`): the process runner and Docker/Compose wrappers.
 > - **C3 is done and committed** (`c24214b`): the verifier, plus C2 follow-ups F1–F9.
-> - **V1–V8 are done** (reviewed 2026-09-27; commit pending). The review found V9–V10 (§2B).
-> - **Next is C4** (redaction + diagnostics), with V9–V10 as its Part 0.
+> - **V1–V8 are done and committed** (`6f03fbf`).
+> - **C4 is done** (redaction + diagnostics, plus V9 and part of V10). Reviewed 2026-09-27; commit pending. The review found **R1 (3 real redaction leaks)**, V10b and V11 (§2B).
+> - **Next is C5** (wire Verify Runtime with Member A), with R1/V10b/V11 as its Part 0.
 > - The PR opens once C3–C5 take the golden fixture's real failure all the way to `diagnostics/latest.json` + `DIAGNOSTIC_READY`. `sandbox-sarmad` stays the secondary check.
 
 > **Local code collects facts. Bob interprets and modifies. Local code verifies.**
@@ -94,8 +95,9 @@
 | `scripts/exec-smoke.cjs` | ✅ C2, 33/33 PASS |
 | `src/execution/verifier.ts` | ✅ C3 (`buildVerifyOptions`, `runVerification`), committed `c24214b`. Follow-ups V1–V8 are done in C4. |
 | `scripts/verify-smoke.cjs` | ✅ C3; broken and fixed fixture scenarios pass |
-| `src/execution/diagnostics.ts` | stub, to be built in C4 |
-| `src/core/redaction.ts` | stub, to be built in C4 |
+| `src/execution/diagnostics.ts` | ✅ C4 (`createFailureBundle`, `validateFailureBundle`, `writeFailureBundle`, `clearDiagnostics`, `DIAGNOSTICS_LIMITS`) |
+| `src/core/redaction.ts` | ✅ C4 (`redactText`, `REDACTED`). Follow-up R1 (quoted values) is done in C5 Part 0. |
+| `scripts/diagnostics-check.cjs` | ✅ C4, 23/23 PASS (fake secrets only) |
 
 **No code outside `src/execution/` calls the execution modules yet**, so C can still reshape signatures, as long as `pnpm compile` stays green.
 
@@ -329,6 +331,34 @@ Observed test runs: broken fixture → app FAIL exit 1; `restart: unless-stopped
 |---|---|---|---|
 | V9 | `verifier.ts` app loop (~497) and health loop (~591) | While a container is `restarting`, `compose ps` reports **ExitCode 0**. So the detail says "restart-looping (last exit code 0)" and the failure stores `exitCode 0` from the container, which is false (the app crashed with 1) and misleading for Bob. | For `restarting`: detail "app is restart-looping (it keeps crashing)", with `exitCode` and `exitCodeSource` both `null`. |
 | V10 | database failure branches (~402, ~430); "Could not read container status" / missing app row (~487, ~520) | `failedService` uses the manifest id even when a Compose row was matched by image. `exitCodeSource` is `'command'` while `exitCode` is `null`. | Use `row.service` when matched; `exitCodeSource` must be `null` whenever `exitCode` is `null`. |
+
+
+### C4: redaction + diagnostics ✅
+Bob session `task15`, **7.10 Bobcoins**. Commit pending.
+- **API:**
+  - `redactText(input, extraSecrets?)` and `REDACTED`;
+  - `createFailureBundle({ attempt, outcome, workspaceRoot, previous?, extraSecrets? })`;
+  - `validateFailureBundle`, `writeFailureBundle` (writes `attempt-<n>.json` + `latest.json`), `clearDiagnostics`;
+  - `DIAGNOSTICS_LIMITS` (150 lines / 12 KiB).
+- **Observed on the real broken fixture:** `latest.json` is 7609 bytes. The header reads "Phase: STARTING / Failed check: app - app exited with code 1 during startup / Exit code: 1 (container exit code; …) / Relevant files: compose.yaml, Dockerfile, .dockerignore / Previous failure: attempt 0 …". The tail keeps `Connection refused`. The leak check (against the demo `.env`) passes, `latest.json` equals `attempt-1.json`, and `clearDiagnostics` removed only the diagnostics files.
+- **Verified by review:** the type-check passes; `diagnostics-check.cjs` gives 23/23 PASS when re-run; the header states facts only; redaction happens before bounding; the phase mapping is explicit; the validator mirrors the schema.
+- **Corrections to Bob's report:**
+  - V10 was only half applied. It changed `failedService` in the app branches, where it's a no-op, but not in the **database** branches, which were the point.
+  - Its C5 notes say "the orchestrator should call these". In fact the **command layer** (`verifyRuntime`) calls them, and `orchestrator.recordFailure` only stores the result.
+- **Budget note:** the V1–V8 session doesn't appear in Bob's task list, so it seems to have been done outside Bob; there's no Bob screenshot for it.
+
+### C4 follow-ups (fold into the C5 prompt, Part 0)
+| # | Where | Issue | Fix |
+|---|---|---|---|
+| R1 | `redaction.ts` rules 5b/5c | **Real leaks, reproduced with fake values:** `{'PASSWORD': 'x'}` (Python dict repr), `POSTGRES_PASSWORD: "x"` (YAML, double-quoted), and `password: 'x'` (YAML, single-quoted) are all left unredacted. Rule 5b needs a quoted key AND a double-quoted value; rule 5c skips values that start with a quote. | Handle `'key': 'v'`, `"key": 'v'`, `key: "v"` and `key: 'v'`, and add those 3 cases to `diagnostics-check.cjs`. |
+| V10b | `verifier.ts` database failure branches (~402, ~430) | `failedService` is still the manifest id (`db`), even when the matched Compose service has a different name. | Use `row.service` when a row matched. |
+| V11 | `verifier.ts` database failure (~400) | A `running` but `unhealthy` db gets `exitCode 0` from `ps` with source `'container'`. The header then says "Exit code: 0 (container exit code…)", which is false, because the container never exited. | Use the container exit code only when the db state is `exited`/`dead`; otherwise set `exitCode` and `exitCodeSource` to `null`. |
+
+Nits (optional):
+- A traceback source line like `SECRET_KEY = os.environ["SECRET_KEY"]` becomes `SECRET_KEY=[REDACTED]"SECRET_KEY"]`. That's over-redaction but safe; `KeyError: 'SECRET_KEY'` survives.
+- `boundExcerpt` drops a single over-long last line entirely instead of keeping its end.
+- Sync `fs` calls are used inside async functions.
+- `diagnostics-check.cjs` is 168 lines against a target of 60–90.
 
 ---
 
@@ -2106,6 +2136,9 @@ Never add global prune commands.
 | C1 | `necromancers_task012_golden_fixture_reset_summary.png` | 5.78 |
 | C2 | `necromancers_task13_fixture_bob_productionize_dryrun_summary.png`: **misnamed**, since the screenshot shows the C2 session. Rename it to `necromancers_task13_process_docker_compose_summary.png`. | 4.82 |
 | C3 | `necromancers_task14_verification_engine_summary.png` | 10.19 |
+| C4 | `necromancers_task15_redaction_diagnostics_summary.png` | 7.10 |
+
+*Update 2026-09-27:* about **27.9 / 40 used, roughly 12 left**. The C1 file was renamed to `task12`. The V1–V8 fixes were not a Bob session, so there's no screenshot. The remaining plan is tight: C5 ≈ 4–5, the fixture `/repo2prod` dry run ≈ 1–2, and demo runs ≈ 6. Fold R1/V10b/V11 into C5 rather than a new session, and consider running the judged demo's `/repo2prod` + repair from a teammate's Bob account if your budget runs short.
 
 Used so far: about **20.8 / 40**, leaving roughly **19**. C3 cost twice the plan, because the prompt was long (context reached 110k tokens) and there were many smoke scenarios. Plan from here:
 - C4 ≈ 4–5 (tight prompt; V1–V8 folded in);
@@ -2209,6 +2242,7 @@ Append new entries here as decisions are made (date — decision — why).
 - 2026-09-27 — C3 accepted (commit `c24214b`), with follow-ups V1–V8 (§2B) **folded into C4**. The main one is V1: a `restarting` app must count as a crash, because Bob-generated Compose files often use `restart: unless-stopped`.
 - 2026-09-27 — Bobcoin budget is tight (about 19 left). C4/C5 prompts must be shorter, with fewer scenarios.
 - 2026-09-27 — V1–V8 accepted (separate Bob session, at the user's request). V9 (don't report a restart-loop exit code, since `ps` shows 0) and V10 (consistent `failedService`/`exitCodeSource`) are folded into C4 Part 0.
+- 2026-09-27 — C4 accepted (diagnostics verified on the real fixture). R1 (quoted-value redaction leaks, proven with fake values), V10b and V11 are folded into C5 Part 0. The budget is about 12 Bobcoins left.
 - 2026-09-27 — C4 keeps FailureBundle unchanged (gap 1 not approved). Header inside `redactedExcerpt`; diagnostics files are `attempt-<n>.json` + `latest.json`; limits 150 lines / 12 KiB; redact first, then bound.
 
 ---
