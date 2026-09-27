@@ -15,7 +15,8 @@
 > - **Member A owns the final report (Task 8).**
 > - **R1/V10b/V11 are fixed and verified.**
 > - **C5 is done** (Verify Runtime wired + `orchestrator.recordVerification`). It was reviewed on 2026-09-27; C5, C6 and the fixes are committed in `96ef83e` and pushed.
-> - **Next:** the in-IDE tests (golden fixture + sandbox copy, 0 Bobcoins), then a PR to `main`, the real `/repo2prod` dry run, and demo rehearsal.
+> - **Next:** the in-IDE tests (golden fixture + sandbox copy, 0 Bobcoins), then a PR to `main` and demo rehearsal.
+> - ⚠️ **Dry-run result, 2026-09-27: Bob's `/repo2prod` fixed the golden defect by itself** (it added `POSTGRES_HOST: db`), so the planned repair loop would not happen live. **A team decision is needed** (§12).
 > - The PR opens once C3–C5 take the golden fixture's real failure all the way to `diagnostics/latest.json` + `DIAGNOSTIC_READY`. `sandbox-sarmad` stays the secondary check.
 
 > **Local code collects facts. Bob interprets and modifies. Local code verifies.**
@@ -2416,6 +2417,13 @@ Append new entries here as decisions are made (date — decision — why).
 - 2026-09-27 — V1–V8 accepted (separate Bob session, at the user's request). V9 (don't report a restart-loop exit code, since `ps` shows 0) and V10 (consistent `failedService`/`exitCodeSource`) are folded into C4 Part 0.
 - 2026-09-27 — C4 accepted (diagnostics verified on the real fixture). R1 (quoted-value redaction leaks, proven with fake values), V10b and V11 are folded into C5 Part 0. The budget is about 12 Bobcoins left.
 - 2026-09-27 — C4 keeps FailureBundle unchanged (gap 1 not approved).
+- 2026-09-27 — **`/repo2prod` dry run (done by accident in the fixture SOURCE folder `test-fixtures/golden-demo`, which has no `.env`).** Results:
+  - **Gap 3 realized:** Bob added `POSTGRES_HOST: db` to `compose.yaml`, so the localhost defect does NOT survive `/repo2prod`, and the golden demo would show no real failure → repair loop.
+  - **C6 works:** Bob declared the existing endpoint (`{"path":"/health/","method":"GET","expectStatus":200,"checks":["database"],"source":"existing","files":["items/views.py","config/urls.py"]}`) and changed no other app code. It also created a placeholder-only `.env.example`.
+  - Verify Runtime correctly failed at BUILDING (no `.env` means compose interpolation fails), and the secrets were redacted.
+  - **New nit R2 (over-redaction):** `error while interpolating services.app.environment.SECRET_KEY: required variable … missing a value` became `…SECRET_KEY: [REDACTED]`. That hides a non-secret error message from Bob (the preceding "POSTGRES_PASSWORD variable is not set" warning still survives). Candidate fix: rule 5c should not redact values that start with `required variable` / `invalid interpolation`.
+  - The source fixture got polluted (`.bob/`, `.repo2prod/`, `.env.example`, modified `compose.yaml`) and must be restored, never committed.
+  - **Pending team decision: the demo defect strategy.** Options that don't fake anything: (a) a defect that only shows up at runtime and that Bob is unlikely to fix from reading the files (e.g. a Postgres-incompatible migration); (b) a demo narrative where Repo2Prod verifies the repo's *existing* Docker config first (real failure) and then `/repo2prod-repair` fixes it (the state machine allows Verify straight after Approve); (c) accept a first-try PASS and show the repair loop on a second repo such as the sandbox. Do NOT tune the skill to preserve the bug.
 - 2026-09-27 — C5 accepted (2.06 Bobcoins, commit `96ef83e`, pushed). Optional robustness nits: `loadPersistedState`/`clearDiagnostics` errors aren't caught in `verifyRuntime.ts`. Tell Member A: gap 15 still affects Prepare Repair / Prepare CI after a reload, and `recordVerification` is ready for the final report.
 - 2026-09-27 — R1/V10b/V11 fixes verified. Built into scratch and probed with fake values: all 4 quoted forms are redacted and idempotent, and the safe lines survive. The database branch reports a container exit code only when the container exited. The commit is pending, together with C6.
 - 2026-09-27 — Prompts written: §8.4b (R1/V10b/V11 fixes, separate session at the user's request) and §8.5 (C5 wiring). Gaps 15 (no state restore after reload) and 16 (no verification setter) are handled in C5. C5's first in-IDE test uses the known manual fix instead of `/repo2prod-repair`, to save Bobcoins.
