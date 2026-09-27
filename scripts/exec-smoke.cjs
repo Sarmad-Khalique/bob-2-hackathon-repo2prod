@@ -109,14 +109,17 @@ const PROJECT_NAME = 'repo2prod-golden-demo';
   await new Promise(r => setTimeout(r, 10_000));
 
   const psResult = await composePs(ctx);
-  check('composePs ok', psResult.ok, `${psResult.services.length} services`);
+  check('composePs ok', psResult.ok, psResult.error ?? `${psResult.services.length} services`);
 
   const db  = psResult.services.find(s => s.service === 'db');
   const app = psResult.services.find(s => s.service === 'app');
   check('db state running', db?.state?.toLowerCase().includes('running'), db?.state ?? 'not found');
   check('db health healthy', db?.health?.toLowerCase().includes('healthy'), db?.health ?? 'not found');
+  check('db image', db?.image?.includes('postgres'), db?.image ?? 'not found');
   check('app state exited', app?.state?.toLowerCase().includes('exit'), app?.state ?? 'not found');
   check('app exitCode 1', app?.exitCode === 1, String(app?.exitCode ?? 'null'));
+  // publishedPorts will be empty because app has exited (no bindings).
+  check('app publishedPorts is array', Array.isArray(app?.publishedPorts), String(app?.publishedPorts));
 
   // ── f. composeLogs ────────────────────────────────────────────────────────
 

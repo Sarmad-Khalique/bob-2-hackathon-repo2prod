@@ -1,5 +1,9 @@
 # Scripts
 
+## verify-smoke.cjs
+
+Dev-only smoke test for `src/execution/verifier.ts` — runs after `pnpm compile` against any demo workspace; prints phases, per-check results, and the failure summary.
+
 ## exec-smoke.cjs
 
 Dev-only smoke test for `src/execution/*` — runs after `pnpm compile` against the golden-demo fixture; prints a `PASS`/`FAIL` line per step.

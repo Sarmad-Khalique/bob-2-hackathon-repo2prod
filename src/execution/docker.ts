@@ -23,5 +23,9 @@ export async function checkDocker(
   }
 
   const serverVersion = run.stdout.trim() || null;
-  return { command, ok: true, run, serverVersion, message: `Docker ${serverVersion ?? '(version unknown)'}` };
+  // An empty version string means the daemon is unreachable despite exiting 0 (e.g. context mismatch).
+  if (!serverVersion) {
+    return { command, ok: false, run, serverVersion: null, message: 'Docker daemon did not report a version.' };
+  }
+  return { command, ok: true, run, serverVersion, message: `Docker ${serverVersion}` };
 }

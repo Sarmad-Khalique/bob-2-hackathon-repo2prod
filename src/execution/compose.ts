@@ -4,7 +4,7 @@
 import { join } from 'node:path';
 import { fileExists } from '../analyzers/fsUtils.js';
 import { formatCommand } from './processRunner.js';
-import type { ProcessRunner, CommandOutcome } from './processRunner.js';
+import type { ProcessRunner, CommandOutcome, ProcessRunResult } from './processRunner.js';
 
 // ─── Timeouts ───────────────────────────────────────────────────────────────
 
@@ -41,11 +41,17 @@ export interface ComposeServiceStatus {
   state: string;
   health: string;
   exitCode: number | null;
+  /** Container image name/tag as reported by Compose. */
+  image: string;
+  /** Host↔container port mappings extracted from Publishers or Ports string. */
+  publishedPorts: { target: number; published: number }[];
 }
 
 /** Result of `composePs`. */
 export interface ComposePsResult extends CommandOutcome {
   services: ComposeServiceStatus[];
+  /** Null on success; populated when the command failed or output could not be parsed. */
+  error: string | null;
 }
 
 // ─── Private arg builder ─────────────────────────────────────────────────────
@@ -61,7 +67,7 @@ function composeArgs(ctx: Pick<ComposeContext, 'projectName' | 'composeFile'>, .
 }
 
 /** Runs a Compose command and wraps the result in a CommandOutcome. */
-async function runComposeT(ctx: ComposeContext, subArgs: string[], timeoutMs: number): Promise<CommandOutcome> {
+async function runCompose(ctx: ComposeContext, subArgs: string[], timeoutMs: number): Promise<CommandOutcome> {
   const args = composeArgs(ctx, ...subArgs);
   const command = formatCommand('docker', args);
   const run = await ctx.runner({
@@ -113,7 +119,7 @@ const COMPOSE_FILE_NAMES = [
 
 /**
  * Returns the first Compose file found in workspaceRoot, or null if none exist.
- * Returns a `message` describing the search when null, so callers can surface it.
+ * Returns null (not a message) when not found; use noComposeFileMessage for UI text.
  */
 export async function findComposeFile(workspaceRoot: string): Promise<string | null> {
   for (const name of COMPOSE_FILE_NAMES) {
@@ -142,16 +148,18 @@ export async function checkCompose(runner: ProcessRunner, cwd: string): Promise<
 
 /** Builds all images declared in the Compose file. */
 export async function composeBuild(ctx: ComposeContext): Promise<CommandOutcome> {
-  return runComposeT(ctx, ['build'], COMPOSE_TIMEOUTS_MS.build);
+  return runCompose(ctx, ['build'], COMPOSE_TIMEOUTS_MS.build);
 }
 
 /**
- * Starts the stack in detached mode.
+ * Starts the stack in detached mode, removing any stale orphan containers.
  * Note: exit code 0 here is NOT proof the app runs — `up -d` returns 0 even if
  * a container crashes immediately after start. Use composePs to check states.
+ * --remove-orphans prevents a renamed/removed service from leaving a stale exited
+ * container that would confuse ps results during the subsequent health check.
  */
 export async function composeUp(ctx: ComposeContext): Promise<CommandOutcome> {
-  return runComposeT(ctx, ['up', '-d'], COMPOSE_TIMEOUTS_MS.up);
+  return runCompose(ctx, ['up', '-d', '--remove-orphans'], COMPOSE_TIMEOUTS_MS.up);
 }
 
 // ─── ps parsing ──────────────────────────────────────────────────────────────
@@ -161,7 +169,18 @@ export async function composeUp(ctx: ComposeContext): Promise<CommandOutcome> {
  *   (a) a JSON array:  [ {...}, {...} ]           — older v2 versions
  *   (b) one JSON object per line (NDJSON):  {...}\n{...}\n  — v5+
  * We handle both shapes.
+ *
+ * On v5.5.1, published ports are in the Publishers array (not the Ports string).
+ * Publishers: [{"URL":"0.0.0.0","TargetPort":8000,"PublishedPort":8000,"Protocol":"tcp"}, ...]
+ * We prefer Publishers when present; fall back to parsing the Ports string for older versions.
  */
+
+interface RawPublisher {
+  URL?: string;
+  TargetPort?: number;
+  PublishedPort?: number;
+  Protocol?: string;
+}
 
 interface RawPsRow {
   Service?: string;
@@ -169,15 +188,65 @@ interface RawPsRow {
   State?: string;
   Health?: string;
   ExitCode?: number | string;
+  Image?: string;
+  /** v5+ array of port-binding objects. */
+  Publishers?: RawPublisher[];
+  /** Older versions: "0.0.0.0:8000->8000/tcp, ..." string. */
+  Ports?: string;
+}
+
+/** Parse published ports from the v5 Publishers array, deduplicating IPv4+IPv6 entries. */
+function parsePublishers(publishers: RawPublisher[]): { target: number; published: number }[] {
+  const seen = new Set<string>();
+  const result: { target: number; published: number }[] = [];
+  for (const p of publishers) {
+    if (p.TargetPort == null || p.PublishedPort == null || p.PublishedPort === 0) continue;
+    const key = `${p.TargetPort}:${p.PublishedPort}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push({ target: p.TargetPort, published: p.PublishedPort });
+    }
+  }
+  return result;
+}
+
+/** Parse published ports from the legacy Ports string ("0.0.0.0:8000->8000/tcp"). */
+function parsePortsString(ports: string): { target: number; published: number }[] {
+  const seen = new Set<string>();
+  const result: { target: number; published: number }[] = [];
+  // Each mapping: "HOST_IP:HOST_PORT->CONTAINER_PORT/proto"
+  for (const segment of ports.split(',')) {
+    const m = segment.trim().match(/:(\d+)->(\d+)/);
+    if (!m) continue;
+    const published = parseInt(m[1], 10);
+    const target = parseInt(m[2], 10);
+    if (!published || !target) continue;
+    const key = `${target}:${published}`;
+    if (!seen.has(key)) {
+      seen.add(key);
+      result.push({ target, published });
+    }
+  }
+  return result;
 }
 
 function parsePsRow(row: RawPsRow): ComposeServiceStatus {
+  let publishedPorts: { target: number; published: number }[];
+  if (Array.isArray(row.Publishers) && row.Publishers.length > 0) {
+    publishedPorts = parsePublishers(row.Publishers);
+  } else if (row.Ports) {
+    publishedPorts = parsePortsString(row.Ports);
+  } else {
+    publishedPorts = [];
+  }
   return {
-    service:   row.Service  ?? '',
-    container: row.Name     ?? '',
-    state:     row.State    ?? '',
-    health:    row.Health   ?? '',
-    exitCode:  row.ExitCode != null ? Number(row.ExitCode) : null,
+    service:       row.Service  ?? '',
+    container:     row.Name     ?? '',
+    state:         row.State    ?? '',
+    health:        row.Health   ?? '',
+    exitCode:      row.ExitCode != null ? Number(row.ExitCode) : null,
+    image:         row.Image    ?? '',
+    publishedPorts,
   };
 }
 
@@ -202,10 +271,11 @@ function parsePsOutput(raw: string): ComposeServiceStatus[] | null {
 
 /** Lists all containers in the Compose project, including stopped ones. */
 export async function composePs(ctx: ComposeContext): Promise<ComposePsResult> {
-  const outcome = await runComposeT(ctx, ['ps', '-a', '--format', 'json'], COMPOSE_TIMEOUTS_MS.ps);
+  const outcome = await runCompose(ctx, ['ps', '-a', '--format', 'json'], COMPOSE_TIMEOUTS_MS.ps);
 
   if (!outcome.ok) {
-    return { ...outcome, services: [] };
+    const reason = outcome.run.stderr.trim() || outcome.run.spawnError || 'non-zero exit';
+    return { ...outcome, services: [], error: `docker compose ps failed: ${reason}` };
   }
 
   const services = parsePsOutput(outcome.run.stdout);
@@ -215,10 +285,10 @@ export async function composePs(ctx: ComposeContext): Promise<ComposePsResult> {
       ok: false,
       run: outcome.run,
       services: [],
-      // Attach a message via stderr so callers can surface it.
+      error: 'Could not parse `docker compose ps` output.',
     };
   }
-  return { ...outcome, services };
+  return { ...outcome, services, error: null };
 }
 
 // ─── port ─────────────────────────────────────────────────────────────────────
@@ -231,27 +301,20 @@ export async function composePort(
   ctx: ComposeContext,
   service: string,
   containerPort: number,
-): Promise<{ command: string; hostPort: number | null; run: import('./processRunner.js').ProcessRunResult }> {
+): Promise<{ command: string; hostPort: number | null; run: ProcessRunResult }> {
   const subArgs = ['port', service, String(containerPort)];
-  const args = composeArgs(ctx, ...subArgs);
-  const command = formatCommand('docker', args);
-  const run = await ctx.runner({
-    cwd: ctx.cwd,
-    command: 'docker',
-    args,
-    timeoutMs: COMPOSE_TIMEOUTS_MS.port,
-    signal: ctx.signal,
-  });
+  const outcome = await runCompose(ctx, subArgs, COMPOSE_TIMEOUTS_MS.port);
 
-  if (run.exitCode !== 0 || run.spawnError) {
+  if (!outcome.ok) {
     // Container may have exited; treat as no mapping rather than an error.
-    return { command, hostPort: null, run };
+    return { command: outcome.command, hostPort: null, run: outcome.run };
   }
 
   // Output is "0.0.0.0:PORT\n" or ":::PORT\n"
-  const match = run.stdout.trim().match(/:(\d+)$/);
+  const match = outcome.run.stdout.trim().match(/:(\d+)$/);
   const hostPort = match ? parseInt(match[1], 10) : null;
-  return { command, hostPort, run };
+  // Port 0 means the OS chose an ephemeral port at bind time but the container has exited.
+  return { command: outcome.command, hostPort: hostPort === 0 ? null : hostPort, run: outcome.run };
 }
 
 // ─── logs ─────────────────────────────────────────────────────────────────────
@@ -265,7 +328,7 @@ export async function composeLogs(
   service: string,
   tailLines: number,
 ): Promise<CommandOutcome> {
-  return runComposeT(
+  return runCompose(
     ctx,
     ['logs', '--no-color', '--no-log-prefix', '--tail', String(tailLines), service],
     COMPOSE_TIMEOUTS_MS.logs,
@@ -283,7 +346,7 @@ export async function composeRun(
   service: string,
   command: string[],
 ): Promise<CommandOutcome> {
-  return runComposeT(ctx, ['run', '--rm', '-T', service, ...command], COMPOSE_TIMEOUTS_MS.run);
+  return runCompose(ctx, ['run', '--rm', '-T', service, ...command], COMPOSE_TIMEOUTS_MS.run);
 }
 
 // ─── down ─────────────────────────────────────────────────────────────────────
@@ -294,5 +357,5 @@ export async function composeDown(
   opts: { removeVolumes: boolean },
 ): Promise<CommandOutcome> {
   const extra = opts.removeVolumes ? ['down', '--remove-orphans', '-v'] : ['down', '--remove-orphans'];
-  return runComposeT(ctx, extra, COMPOSE_TIMEOUTS_MS.down);
+  return runCompose(ctx, extra, COMPOSE_TIMEOUTS_MS.down);
 }
