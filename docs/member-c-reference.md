@@ -13,8 +13,9 @@
 > - **C4 is done and committed** (`ec767a6`): redaction + diagnostics, plus V9 and part of V10. The review found **R1 (3 real redaction leaks)**, V10b and V11 (§2B).
 > - **C6 is done** (health endpoint in the `/repo2prod` skill + repair guard + `scripts/check-skill-sync.cjs`). Reviewed 2026-09-27; commit pending.
 > - **Member A owns the final report (Task 8).**
-> - **R1/V10b/V11 are fixed and verified** (commit pending, together with C6).
-> - **Next is C5** (wire Verify Runtime, i.e. Task 7, with Member A's OK; prompt §8.5). Then the fixture `/repo2prod` dry run, and the PR.
+> - **R1/V10b/V11 are fixed and verified.**
+> - **C5 is done** (Verify Runtime wired + `orchestrator.recordVerification`). It was reviewed on 2026-09-27; C5, C6 and the fixes are committed in `96ef83e` and pushed.
+> - **Next:** the in-IDE tests (golden fixture + sandbox copy, 0 Bobcoins), then a PR to `main`, the real `/repo2prod` dry run, and demo rehearsal.
 > - The PR opens once C3–C5 take the golden fixture's real failure all the way to `diagnostics/latest.json` + `DIAGNOSTIC_READY`. `sandbox-sarmad` stays the secondary check.
 
 > **Local code collects facts. Bob interprets and modifies. Local code verifies.**
@@ -103,7 +104,8 @@
 | `scripts/diagnostics-check.cjs` | ✅ C4, 23/23 PASS (fake secrets only) |
 | `templates/bob-skills/repo2prod*` + `src/core/bobSkills.ts` | ✅ C6 (Member A's files, with approval): new "Ensure a health endpoint exists" step and the repair-skill guard. The inline strings and templates are byte-identical. |
 | `scripts/check-skill-sync.cjs` | ✅ C6: fails if the skill templates drift from the inline strings |
-| `src/commands/verifyRuntime.ts` | ❌ **not wired**: it still says "verification implementation pending". This is C5. |
+| `src/commands/verifyRuntime.ts` | ✅ C5 (Member A's file, approved): runs the verifier, then either VERIFIED, or `latest.json` + DIAGNOSTIC_READY, or FAILED at 2/2. Internal errors go to FAILED without writing `latest.json`, and state is restored after a reload. |
+| `src/core/orchestrator.ts` `recordVerification` | ✅ C5: stores the `VerificationResult` for Member A's final report |
 
 **No code outside `src/execution/` calls the execution modules yet**, so C can still reshape signatures, as long as `pnpm compile` stays green.
 
@@ -2305,9 +2307,10 @@ Never add global prune commands.
 | C2 | `necromancers_task13_fixture_bob_productionize_dryrun_summary.png`: **misnamed**, since the screenshot shows the C2 session. Rename it to `necromancers_task13_process_docker_compose_summary.png`. | 4.82 |
 | C3 | `necromancers_task14_verification_engine_summary.png` | 10.19 |
 | C4 | `necromancers_task15_redaction_diagnostics_summary.png` | 7.10 |
-| C6 | `necromancers_task16_health_endpoint_check_summary.png` (delete the duplicate `... summary copy.png`) | 1.42 |
+| C6 | ⚠️ The original was deleted, and the duplicate `necromancers_task16_health_endpoint_check_summary copy.png` was committed. Rename it with `git mv` (drop " copy"). | 1.42 |
+| C5 | `necromancers_task17_integrations_summary.png` | 2.06 |
 
-*Update 2026-09-27 (after C6):* about **29.3 / 40 used, roughly 10.7 left**. (Before C6: about 27.9.) The C1 file was renamed to `task12`. The V1–V8 fixes were not a Bob session, so there's no screenshot. The remaining plan is tight: C5 ≈ 4–5, the fixture `/repo2prod` dry run ≈ 1–2, and demo runs ≈ 6. Fold R1/V10b/V11 into C5 rather than a new session, and consider running the judged demo's `/repo2prod` + repair from a teammate's Bob account if your budget runs short.
+*Update 2026-09-27 (after C5):* about **31.4 / 40 used, roughly 8.6 left**. (After C6: about 29.3; after C4: about 27.9.) The R1/V10b/V11 fixes, like V1–V8, were not Bob sessions. The C1 file was renamed to `task12`. The V1–V8 fixes were not a Bob session, so there's no screenshot. The remaining plan is tight: C5 ≈ 4–5, the fixture `/repo2prod` dry run ≈ 1–2, and demo runs ≈ 6. Fold R1/V10b/V11 into C5 rather than a new session, and consider running the judged demo's `/repo2prod` + repair from a teammate's Bob account if your budget runs short.
 
 Used so far: about **20.8 / 40**, leaving roughly **19**. C3 cost twice the plan, because the prompt was long (context reached 110k tokens) and there were many smoke scenarios. Plan from here:
 - C4 ≈ 4–5 (tight prompt; V1–V8 folded in);
@@ -2413,6 +2416,7 @@ Append new entries here as decisions are made (date — decision — why).
 - 2026-09-27 — V1–V8 accepted (separate Bob session, at the user's request). V9 (don't report a restart-loop exit code, since `ps` shows 0) and V10 (consistent `failedService`/`exitCodeSource`) are folded into C4 Part 0.
 - 2026-09-27 — C4 accepted (diagnostics verified on the real fixture). R1 (quoted-value redaction leaks, proven with fake values), V10b and V11 are folded into C5 Part 0. The budget is about 12 Bobcoins left.
 - 2026-09-27 — C4 keeps FailureBundle unchanged (gap 1 not approved).
+- 2026-09-27 — C5 accepted (2.06 Bobcoins, commit `96ef83e`, pushed). Optional robustness nits: `loadPersistedState`/`clearDiagnostics` errors aren't caught in `verifyRuntime.ts`. Tell Member A: gap 15 still affects Prepare Repair / Prepare CI after a reload, and `recordVerification` is ready for the final report.
 - 2026-09-27 — R1/V10b/V11 fixes verified. Built into scratch and probed with fake values: all 4 quoted forms are redacted and idempotent, and the safe lines survive. The database branch reports a container exit code only when the container exited. The commit is pending, together with C6.
 - 2026-09-27 — Prompts written: §8.4b (R1/V10b/V11 fixes, separate session at the user's request) and §8.5 (C5 wiring). Gaps 15 (no state restore after reload) and 16 (no verification setter) are handled in C5. C5's first in-IDE test uses the known manual fix instead of `/repo2prod-repair`, to save Bobcoins.
 - 2026-09-27 — C6 accepted (1.42 Bobcoins). The skills are verified byte-identical to the templates, and the CI skill is untouched. Member A will own the final report (Task 8). The C5 (Task 7) owner still needs agreeing, but C is proposed, since all the execution code is C's.
