@@ -16,6 +16,7 @@
     "onCommand:repo2prod.verifyRuntime",
     "onCommand:repo2prod.prepareRepair",
     "onCommand:repo2prod.prepareCI",
+    "onCommand:repo2prod.completeRun",
     "onCommand:repo2prod.resetRun",
     "onCommand:repo2prod.createBobSkillSmokeTest",
     "onCommand:repo2prod.installBobSkills"
@@ -38,6 +39,10 @@
       {
         "command": "repo2prod.prepareCI",
         "title": "Repo2Prod: Prepare CI"
+      },
+      {
+        "command": "repo2prod.completeRun",
+        "title": "Repo2Prod: Complete Run"
       },
       {
         "command": "repo2prod.resetRun",

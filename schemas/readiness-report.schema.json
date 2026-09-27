@@ -8,7 +8,20 @@
     "overall": {
       "enum": ["PASS", "FAIL", "WARN", "NOT_RUN", "UNKNOWN"]
     },
-    "checks": { "type": "array" },
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "observed"],
+        "properties": {
+          "id": { "type": "string" },
+          "status": { "enum": ["PASS", "FAIL", "WARN", "NOT_RUN", "UNKNOWN"] },
+          "observed": { "type": "boolean" },
+          "detail": { "type": ["string", "null"] }
+        }
+      }
+    },
     "repairAttemptsUsed": { "type": "integer", "minimum": 0, "maximum": 2 },
     "summary": { "type": "string" }
   }

@@ -1,6 +1,7 @@
 // TODO(Member A): extension activation, command registration, and webview host.
 
 import * as vscode from 'vscode';
+import { registerCompleteRun } from './commands/completeRun';
 import { registerCreateBobSkillSmokeTest } from './commands/createBobSkillSmokeTest';
 import { registerInstallBobSkills } from './commands/installBobSkills';
 import { registerPrepareCI } from './commands/prepareCI';
@@ -14,6 +15,7 @@ export function activate(context: vscode.ExtensionContext): void {
   registerVerifyRuntime(context);
   registerPrepareRepair(context);
   registerPrepareCI(context);
+  registerCompleteRun(context);
   registerResetRun(context);
   registerCreateBobSkillSmokeTest(context);
   registerInstallBobSkills(context);

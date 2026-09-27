@@ -18,7 +18,7 @@ import {
   resetRunState,
 } from './state';
 import { bobSkillManager } from './bobSkills';
-import type { RunState, FailureBundle, Evidence, RuntimeManifest, VerificationResult } from './types';
+import type { RunState, FailureBundle, Evidence, RuntimeManifest, VerificationResult, ReadinessReport } from './types';
 
 // ---------------------------------------------------------------------------
 // Repo2ProdOrchestrator
@@ -214,6 +214,24 @@ export class Repo2ProdOrchestrator {
         const message = err instanceof Error ? err.message : String(err);
         void vscode.window.showWarningMessage(
           `Repo2Prod: could not persist verification result: ${message}`,
+        );
+      }
+    }
+  }
+
+  /**
+   * Store the finalized ReadinessReport on the run state without a state transition.
+   * Must be called before markVerified() so the report is persisted alongside the state.
+   */
+  recordReport(report: ReadinessReport): void {
+    this.state = { ...this.state, report };
+    if (this.workspaceRoot) {
+      try {
+        saveRunState(this.workspaceRoot, this.state);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showWarningMessage(
+          `Repo2Prod: could not persist readiness report: ${message}`,
         );
       }
     }

@@ -196,13 +196,45 @@ user-invocable: true
 
 Read the following Repo2Prod state files before doing any work:
 
+**Required:**
+
 - \`.repo2prod/runtime-manifest.json\`
 - \`.repo2prod/readiness-report.json\`
 
-Before generating any CI configuration, confirm that \`.repo2prod/readiness-report.json\`
-shows that the local build and test path was **actually verified** (status \`PASS\`).
-If the readiness report does not indicate a successful verified run, stop and report
-that CI generation requires a passing local verification first.
+**Optional (read if present):**
+
+- \`.repo2prod/health-endpoint.json\`
+
+Also inspect the actual verified runtime files that exist in the repository,
+such as:
+
+- \`Dockerfile\`
+- \`compose.yaml\`
+- \`docker-compose.yml\`
+- \`docker-compose.yaml\`
+- \`compose.yml\`
+
+Before generating any CI configuration, confirm that
+\`.repo2prod/readiness-report.json\` shows \`"overall": "PASS"\`.
+If the readiness report \`overall\` is not \`PASS\`, stop immediately and report
+that CI generation requires a passing local verification first. Do not
+attempt to generate CI for a failed or partial verification.
+
+**Important:** \`runtime-manifest.json\` contains the pre-execution runtime
+plan. Its \`commands\` fields may be \`null\` even after a successful run because
+command values are populated by Bob, not by Repo2Prod. Do **not** treat null
+\`commands\` as a reason to stop. Use the readiness report and the actual
+runtime files (Dockerfile, compose file) as the source of truth for what was
+verified and how to reproduce it in CI.
+
+The readiness report is the source of truth for WHAT was actually verified:
+
+- \`checks\` array shows each check id, status, and whether it was observed.
+- \`"status": "PASS"\` with \`"observed": true\` means that step was genuinely
+  executed and passed.
+- \`"status": "NOT_RUN"\` means that step was not applicable or not present
+  (e.g., \`database\` for a SQLite app, or \`tests\` when no tests exist).
+- Do **not** treat \`NOT_RUN\` as \`PASS\`.
 
 Once verification is confirmed, create only:
 
@@ -212,24 +244,47 @@ Requirements:
 
 1. **GitHub Actions only.** Do not generate CI for any other provider.
 
-2. **Reproduce the verified path.** Use only the install, build, and test
-   commands that are represented in the verified runtime manifest state.
-   Do not invent commands that were not part of the verified run.
+2. **Reproduce the verified path from the actual runtime files.** Inspect
+   the Dockerfile and Compose file to understand the verified build and
+   startup commands. Use those commands in CI. Do not invent commands.
 
-3. **No cloud deployment.** The workflow should build and test only — not
-   deploy to any cloud provider.
+3. **If \`docker\` and \`build\` checks are PASS and observed:**
+   CI may reproduce the Docker/Compose build step.
 
-4. **No unnecessary secrets.** Reference only environment variables that are
-   genuinely required for the build/test steps. Do not add placeholder secrets
-   that serve no verified purpose.
+4. **If \`app\` and \`health\` checks are PASS and observed:**
+   CI may start the Compose runtime and verify the health endpoint.
+   If \`.repo2prod/health-endpoint.json\` exists and \`health\` was PASS,
+   use the declared path from that file for the CI health probe.
 
-5. **Keep it minimal.** A short, readable workflow that exactly reproduces the
-   verified path is better than a comprehensive but unverified one.
+5. **Test step rules:**
+   - Only add a test step if \`tests\` check is \`"status": "PASS"\` and
+     \`"observed": true\` in the readiness report.
+   - If \`tests\` is \`NOT_RUN\`, do **not** invent a test command. Omit the
+     test step entirely.
+   - If an exact test command cannot be established from the verified
+     runtime configuration, omit the test step and note that limitation
+     in the summary.
 
-6. When finished, summarize:
-   - the generated workflow structure
-   - which verified commands it reproduces
-   - any manual steps required (e.g., configuring repository secrets)
+6. **No cloud deployment.** The workflow must build and verify only.
+
+7. **No unnecessary secrets.** Reference only environment variables that are
+   genuinely required for the verified build/startup steps.
+   - \`user-secret-required\` variables must be declared as GitHub Actions
+     secrets (\`\${{ secrets.NAME }}\`). Do not fabricate values.
+   - Do not copy \`.env\` into the workflow.
+   - Do not expose secret values.
+
+8. **No vulnerability scanner, dependency upgrades, or SBOM generation.**
+
+9. **Keep it minimal.** A short, readable workflow that exactly reproduces
+   the verified path is better than a comprehensive but unverified one.
+
+10. When finished, summarize:
+    - the generated workflow structure
+    - which verified stages were reproduced
+    - which stages were omitted because they were NOT_RUN
+    - any repository secrets or manual configuration required before
+      the workflow can run
 `,
 };
 

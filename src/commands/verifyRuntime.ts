@@ -18,6 +18,7 @@
 import * as vscode from 'vscode';
 import { orchestrator } from '../core/orchestrator';
 import { Repo2ProdState, MAX_REPAIR_ATTEMPTS } from '../core/state';
+import { buildReadinessReport, saveReadinessReport } from '../core/readiness';
 import { redactText } from '../core/redaction';
 import {
   buildVerifyOptions,
@@ -165,11 +166,30 @@ export function registerVerifyRuntime(context: vscode.ExtensionContext): void {
 
             if (outcome.failure === null) {
               // ── Step 9a: success ──────────────────────────────────────────
+              // Build and persist the readiness report BEFORE transitioning to
+              // VERIFIED.  If this fails, surface as an internal error rather
+              // than silently advancing to CI.
+              let reportPath: string;
+              try {
+                const report = buildReadinessReport(
+                  outcome.result,
+                  orchestrator.repairAttemptsUsed(),
+                );
+                reportPath = await saveReadinessReport(root, report);
+                orchestrator.recordReport(report);
+              } catch (err) {
+                const message = err instanceof Error ? err.message : String(err);
+                await handleInternalError(root, `could not persist readiness report: ${message}`);
+                return;
+              }
+
               orchestrator.markVerified();
+
               const healthCheck = outcome.result.checks.find(c => c.id === 'health');
               const testsCheck  = outcome.result.checks.find(c => c.id === 'tests');
               const healthStatus = healthCheck?.status ?? 'UNKNOWN';
               const testsStatus  = testsCheck?.status  ?? 'UNKNOWN';
+              channel.appendLine(`[readiness-report] ${redactText(reportPath)}`);
               void vscode.window.showInformationMessage(
                 `Repo2Prod: runtime VERIFIED (health ${healthStatus}, tests ${testsStatus}). ` +
                   `Next: Repo2Prod: Prepare CI.`,
