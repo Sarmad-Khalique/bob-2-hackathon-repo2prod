@@ -9,6 +9,9 @@ Read the following Repo2Prod state files before doing any work:
 - `.repo2prod/runtime-manifest.json`
 - `.repo2prod/diagnostics/latest.json`
 
+If `.repo2prod/health-endpoint.json` exists, read it as well — it records
+where Repo2Prod probes for a health response.
+
 The diagnostic file contains evidence from a **real Repo2Prod execution** —
 real build output, real container logs, or real test output. Treat it as
 ground truth.
@@ -32,7 +35,13 @@ Perform the following:
 5. **Never fabricate credentials.** If a missing or wrong credential caused
    the failure, note it explicitly — do not invent real values.
 
-6. When finished, summarize:
+6. **Do not remove, bypass, or weaken the health endpoint declared in
+   `.repo2prod/health-endpoint.json`.** If the health check failed, fix the
+   underlying cause, not the check. Only change the endpoint if the diagnostic
+   shows the endpoint itself is broken, and keep `.repo2prod/health-endpoint.json`
+   accurate.
+
+7. When finished, summarize:
    - the identified root cause
    - files changed
    - why this specific change should resolve the exact observed failure

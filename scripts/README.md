@@ -1,5 +1,9 @@
 # Scripts
 
+## check-skill-sync.cjs
+
+Verifies that each inline skill `content` string in `src/core/bobSkills.ts` is identical to its corresponding `templates/bob-skills/*/SKILL.md` template; prints `IN SYNC` / `DIFFERENT` per skill and exits 1 on any difference.
+
 ## verify-smoke.cjs
 
 Dev-only smoke test for `src/execution/verifier.ts` — runs after `pnpm compile` against any demo workspace; prints phases, per-check results, and the failure summary.

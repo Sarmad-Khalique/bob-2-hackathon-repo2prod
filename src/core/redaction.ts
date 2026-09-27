@@ -45,7 +45,7 @@ export function redactText(input: string, extraSecrets?: readonly string[]): str
   );
 
   // 5. Key/value pairs whose KEY matches the secret-key pattern.
-  //    Covers: KEY=value, KEY = 'value', KEY: value, "key": "value", DSN password=value.
+  //    Covers: KEY=value, KEY = 'value', KEY: value, KEY: "value", "key": "value", 'key': 'value', DSN password=value.
   //    Prose without a separator (e.g. "password authentication failed") must survive.
 
   // 5a. Shell / ini / YAML / DSN: KEY=value or KEY = value (unquoted/single/double-quoted value).
@@ -58,24 +58,29 @@ export function redactText(input: string, extraSecrets?: readonly string[]): str
     (_, key) => `${key}=[REDACTED]`,
   );
 
-  // 5b. JSON/YAML "key": "value" (double-quoted both sides).
+  // 5b. JSON / Python dict: "key": "value" or 'key': 'value' (either quote on each side).
+  //     Keeps both quote styles; replaces only the value.
   s = s.replace(
     new RegExp(
-      `"([^"]*${SK}[^"]*)"\\s*:\\s*"([^"]*)"`,
+      `(['"])([^'"]*${SK}[^'"]*)\\1\\s*:\\s*(?:"[^"]*"|'[^']*')`,
       'gi',
     ),
-    (_, key) => `"${key}": "${REDACTED}"`,
+    (m, q, key) => {
+      const vq = m[m.length - 1];
+      return `${q}${key}${q}: ${vq}${REDACTED}${vq}`;
+    },
   );
 
-  // 5c. YAML/config key: value (unquoted value on same line, colon-separated).
-  //     Skip if value already starts with [REDACTED] or an HTTP auth scheme (handled by rule 4).
+  // 5c. YAML/config key: value (bare key, colon-separated; value quoted or unquoted on same line).
+  //     Skip if an unquoted value already starts with [REDACTED] or an HTTP auth scheme (rule 4).
   s = s.replace(
     new RegExp(
-      `(?<![\\w/])([\\w-]*${SK}[\\w-]*):\\s+([^\\s'"{][^\\n]*)`,
+      `(?<![\\w/])([\\w-]*${SK}[\\w-]*):\\s+(?:("[^"\\n]*"|'[^'\\n]*')|([^\\s'"{][^\\n]*))`,
       'gi',
     ),
-    (_, key, value) => {
-      if (value.startsWith(REDACTED) || /^(Bearer|Basic)\s/i.test(value)) return `${key}: ${value}`;
+    (_, key, quoted: string | undefined, value: string | undefined) => {
+      if (quoted !== undefined) return `${key}: ${quoted[0]}${REDACTED}${quoted[0]}`;
+      if (value!.startsWith(REDACTED) || /^(Bearer|Basic)\s/i.test(value!)) return `${key}: ${value}`;
       return `${key}: ${REDACTED}`;
     },
   );

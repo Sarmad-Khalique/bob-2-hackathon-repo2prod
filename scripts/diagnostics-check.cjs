@@ -70,6 +70,23 @@ check('JSON password key redacted',
   redactText('{"password": "hunter22x"}'),
   '{"password": "[REDACTED]"}');
 
+// R1: quoted value after "key:" (Python dict / YAML / mixed quotes)
+check('Python dict PASSWORD redacted, HOST kept',
+  redactText("{'PASSWORD': 'fakePass123', 'HOST': 'db'}"),
+  "{'PASSWORD': '[REDACTED]', 'HOST': 'db'}");
+check('YAML double-quoted value redacted',
+  redactText('POSTGRES_PASSWORD: "fakePass123"'),
+  'POSTGRES_PASSWORD: "[REDACTED]"');
+check('YAML single-quoted value redacted',
+  redactText("password: 'fakePass123'"),
+  "password: '[REDACTED]'");
+check('"KEY": \'value\' redacted',
+  redactText(`"POSTGRES_PASSWORD": 'fakePass123'`),
+  `"POSTGRES_PASSWORD": '[REDACTED]'`);
+check("'KEY': \"value\" redacted",
+  redactText(`'POSTGRES_PASSWORD': "fakePass123"`),
+  `'POSTGRES_PASSWORD': "[REDACTED]"`);
+
 // DSN password=value style
 checkContains('DSN password=value redacted',
   redactText('password=hunter22x host=db'),
@@ -120,6 +137,16 @@ check('prose password message survives',
   redactText('password authentication failed for user "inventory"'),
   'password authentication failed for user "inventory"');
 
+for (const text of [
+  "KeyError: 'SECRET_KEY'",
+  `'FATAL:  password authentication failed for user "inventory"'`,
+  `'connection to server at "127.0.0.1", port 5432 failed: Connection refused'`,
+  `'sqlite3.OperationalError: unable to open database file'`,
+  "'HOST': 'db'",
+]) {
+  check(`survives: ${text.slice(0, 40)}`, redactText(text), text);
+}
+
 // ─── Idempotence ──────────────────────────────────────────────────────────────
 
 const inputs = [
@@ -127,6 +154,11 @@ const inputs = [
   'SECRET_KEY=abcd1234efgh5678ijkl',
   'Authorization: Bearer abc.def.ghi',
   'password authentication failed for user "inventory"',
+  "{'PASSWORD': 'fakePass123', 'HOST': 'db'}",
+  'POSTGRES_PASSWORD: "fakePass123"',
+  "password: 'fakePass123'",
+  `"POSTGRES_PASSWORD": 'fakePass123'`,
+  `'POSTGRES_PASSWORD': "fakePass123"`,
 ];
 for (const input of inputs) {
   const once = redactText(input);

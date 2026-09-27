@@ -10,8 +10,11 @@
 > - **C2 is done and committed** (`a144e06`): the process runner and Docker/Compose wrappers.
 > - **C3 is done and committed** (`c24214b`): the verifier, plus C2 follow-ups F1–F9.
 > - **V1–V8 are done and committed** (`6f03fbf`).
-> - **C4 is done** (redaction + diagnostics, plus V9 and part of V10). Reviewed 2026-09-27; commit pending. The review found **R1 (3 real redaction leaks)**, V10b and V11 (§2B).
-> - **Next is C5** (wire Verify Runtime with Member A), with R1/V10b/V11 as its Part 0.
+> - **C4 is done and committed** (`ec767a6`): redaction + diagnostics, plus V9 and part of V10. The review found **R1 (3 real redaction leaks)**, V10b and V11 (§2B).
+> - **C6 is done** (health endpoint in the `/repo2prod` skill + repair guard + `scripts/check-skill-sync.cjs`). Reviewed 2026-09-27; commit pending.
+> - **Member A owns the final report (Task 8).**
+> - **R1/V10b/V11 are fixed and verified** (commit pending, together with C6).
+> - **Next is C5** (wire Verify Runtime, i.e. Task 7, with Member A's OK; prompt §8.5). Then the fixture `/repo2prod` dry run, and the PR.
 > - The PR opens once C3–C5 take the golden fixture's real failure all the way to `diagnostics/latest.json` + `DIAGNOSTIC_READY`. `sandbox-sarmad` stays the secondary check.
 
 > **Local code collects facts. Bob interprets and modifies. Local code verifies.**
@@ -98,6 +101,9 @@
 | `src/execution/diagnostics.ts` | ✅ C4 (`createFailureBundle`, `validateFailureBundle`, `writeFailureBundle`, `clearDiagnostics`, `DIAGNOSTICS_LIMITS`) |
 | `src/core/redaction.ts` | ✅ C4 (`redactText`, `REDACTED`). Follow-up R1 (quoted values) is done in C5 Part 0. |
 | `scripts/diagnostics-check.cjs` | ✅ C4, 23/23 PASS (fake secrets only) |
+| `templates/bob-skills/repo2prod*` + `src/core/bobSkills.ts` | ✅ C6 (Member A's files, with approval): new "Ensure a health endpoint exists" step and the repair-skill guard. The inline strings and templates are byte-identical. |
+| `scripts/check-skill-sync.cjs` | ✅ C6: fails if the skill templates drift from the inline strings |
+| `src/commands/verifyRuntime.ts` | ❌ **not wired**: it still says "verification implementation pending". This is C5. |
 
 **No code outside `src/execution/` calls the execution modules yet**, so C can still reshape signatures, as long as `pnpm compile` stays green.
 
@@ -486,6 +492,8 @@ DIAGNOSTIC_READY → (A: prepareRepair, max 2) → BOB_REPAIR_SKILL_READY → WA
 | 12 | Never leak `.env` via Compose. Compose auto-loads `.env` for `${VAR}` interpolation. | Never run `docker compose config` into logs or diagnostics. Never read `.env`. Redact `KEY=value` patterns in all captured output. | — |
 | 13 | Demo target choice: the real SQLite sandbox failure (Bob-generated volume bug) vs the planned Postgres `localhost` fixture. | Team decision (§12). Build C2–C4 so they work for **both**. | whole team |
 | 14 | Most real repos (incl. sandbox-sarmad) have **no health endpoint**, so health can never PASS and "deployment succeeded" can't be proven. | **Task C6:** the `/repo2prod` skill makes Bob look for an existing health endpoint first. If there is none, Bob creates a minimal one that really checks the DB, and declares it in `.repo2prod/health-endpoint.json`. The verifier uses the declared path, but **PASS still needs an observed HTTP 200**. The skill files are Member A's, so pair with or get approval from A. | A |
+| 15 | The extension never restores `.repo2prod/run-state.json` on activation (`src/extension.ts` doesn't call `loadPersistedState`). After a Bob window reload (often needed for skill discovery), the state is IDLE and Verify Runtime refuses to run. | C5 restores it inside the Verify Runtime command when the state is IDLE. Tell Member A so other commands (Prepare Repair, Prepare CI) get the same fix in `extension.ts`. | A |
+| 16 | Nothing stores the `VerificationResult`: `RunState.verification` has no setter. Member A's final report needs it. | C5 adds `orchestrator.recordVerification(result)`, with A's approval. | A |
 
 ---
 
@@ -1747,324 +1755,484 @@ Do not implement anything outside this task.
 
 ---
 
-### 8.5 — C5: Execution integration with Member A (A's Task 7)
+### 8.4b — Fixes R1, V10b, V11 (separate small session)
 
-> Pair with Member A. Their file `src/commands/verifyRuntime.ts` is being edited, so agree on it first.
+> Written 2026-09-27. It needs no Docker and no Bob skills, and should cost about 1–2 Bobcoins. Run it before C5.
 
 ```text
 Read @AGENTS.md completely before making any changes.
 
-I am Member C of Repo2Prod, pairing with Member A on Task 7.
+I am Member C of Repo2Prod.
 
-This is Task C5: wire real execution/verification into the
-"Repo2Prod: Verify Runtime" command.
+This is a small follow-up task: fix R1 (redaction leaks), V10b and V11
+(database-failure fields in the verifier). Keep every change minimal.
 
 IMPORTANT CONTEXT
 
-Complete:
-- src/execution/processRunner.ts, docker.ts, compose.ts (C2)
-- src/execution/verifier.ts: runVerification(options, runner, onPhase, signal)
-  + buildVerifyOptions(workspaceRoot, manifest) (C3)
-- src/core/redaction.ts, src/execution/diagnostics.ts:
-  createFailureBundle, writeFailureBundle, clearDiagnostics (C4)
-- Member A orchestrator hooks: markBobProductionizationComplete,
-  markBobRepairComplete, beginStarting, beginVerification, beginTests,
-  markVerified, recordFailure, repairAttemptsUsed, runState.
-
-src/commands/verifyRuntime.ts currently moves to BUILDING and stops with
-"verification implementation pending". Member A owns this file; we are
-editing it together with the smallest possible change.
-
-==================================================
-OWNERSHIP / SCOPE
-==================================================
-
-Modify:
-  src/commands/verifyRuntime.ts   (paired with Member A)
-  src/execution/*                 (small fixes only if integration needs them)
-Only if strictly necessary, add a tiny method to the orchestrator for storing
-the VerificationResult (e.g. recordVerification(result)) — agree with
-Member A; do not rewrite the orchestrator.
-
-Do NOT change state.ts transition map or MAX_REPAIR_ATTEMPTS.
-Do NOT change analyzers or Bob skills.
+C1–C4 and C6 are complete. The C4 review found:
+- R1: src/core/redaction.ts does NOT redact a quoted value after "key:".
+  These leak today (reproduced with fake values):
+    {'PASSWORD': 'fakePass123', 'HOST': 'db'}      Python dict repr
+    POSTGRES_PASSWORD: "fakePass123"                YAML, double-quoted value
+    password: 'fakePass123'                         YAML, single-quoted value
+  Cause: rule 5b needs a double-quoted key AND a double-quoted value, and
+  rule 5c skips values that start with a quote.
+- V10b: in src/execution/verifier.ts, the database failure branches (~402,
+  ~430) set failedService to the manifest id (e.g. "db"), even when the
+  Compose row was matched by image under another name (e.g. "postgres").
+- V11: same database branch (~394-401). A db that is "running" but
+  "unhealthy" gets ExitCode 0 from `ps`, stored with exitCodeSource
+  'container'. The detail reads like "postgres (db) running (code 0)", and
+  the diagnostic header says "Exit code: 0 (container exit code…)". That's
+  false, because the container never exited.
 
 ==================================================
-GOAL
+SCOPE
 ==================================================
 
-WAITING_FOR_BOB_PRODUCTIONIZATION / WAITING_FOR_BOB_REPAIR
-  -> Verify Runtime
-  -> BUILDING -> STARTING -> VERIFYING_HEALTH -> RUNNING_TESTS -> VERIFIED
-On failure:
-  -> FailureBundle -> .repo2prod/diagnostics/latest.json -> DIAGNOSTIC_READY
-  -> message: "Verification failed at <phase>. Run 'Repo2Prod: Prepare Repair'
-     then /repo2prod-repair in Bob Agent mode." (A handles budget)
+FILES TO MODIFY (nothing else):
+  src/core/redaction.ts
+  src/execution/verifier.ts        database failure branches only
+  scripts/diagnostics-check.cjs    add the new cases
+Do NOT touch diagnostics.ts, compose.ts, processRunner.ts, docker.ts,
+src/core/types.ts, state.ts, orchestrator.ts, src/commands/**, templates/**,
+test-fixtures/**, docs/**, package.json.
 
 ==================================================
-WIRING
+FIXES
 ==================================================
 
-In verifyRuntime:
-1. Existing state guard + mark*Complete() -> BUILDING (keep as is).
-2. Load manifest from orchestrator.runState().manifest; if null, fail
-   clearly ("Runtime manifest missing — run Start Productionization").
-3. options = buildVerifyOptions(workspaceRoot, manifest)
-4. vscode.window.withProgress (Notification, cancellable) and pass an
-   AbortSignal wired to the cancellation token.
-5. onPhase mapping:
-     'BUILDING'          -> (already BUILDING, no-op)
-     'STARTING'          -> orchestrator.beginStarting()
-     'VERIFYING_HEALTH'  -> orchestrator.beginVerification()
-     'RUNNING_TESTS'     -> orchestrator.beginTests()
-   Update the progress message on each phase.
-6. On success -> store the VerificationResult (agreed method) ->
-   orchestrator.markVerified() -> info message listing check statuses.
-7. On failure ->
-     bundle = createFailureBundle({ attempt: orchestrator.repairAttemptsUsed(),
-       phase: <current state>, command, exitCode, rawOutput, extraSecrets })
-     await writeFailureBundle(root, bundle)
-     orchestrator.recordFailure(bundle)
-     error message with phase + next step.
-   If attempts used == MAX_REPAIR_ATTEMPTS, say the limit is reached and
-   that the run will stop (Member A decides FAILED transition).
-8. Unexpected exceptions (e.g. Docker not running before BUILDING checks
-   complete) must still produce a FailureBundle at the current phase, not a
-   silent crash.
-9. Output channel "Repo2Prod" with bounded, REDACTED summaries only.
+R1 Redact quoted values after a secret key followed by ":" in ALL of these forms:
+     'KEY': 'value'    'KEY': "value"    "KEY": 'value'    "KEY": "value"
+     KEY: "value"      KEY: 'value'      KEY: value   (the last two forms already work)
+   Keep the key and the quote style; replace only the value, e.g.
+     {'PASSWORD': '[REDACTED]', 'HOST': 'db'}
+     POSTGRES_PASSWORD: "[REDACTED]"
+   Must still hold:
+   - redactText stays pure and idempotent.
+   - These survive unchanged: KeyError: 'SECRET_KEY'
+       'FATAL:  password authentication failed for user "inventory"'
+       'connection to server at "127.0.0.1", port 5432 failed: Connection refused'
+       'sqlite3.OperationalError: unable to open database file'
+       'HOST': 'db'   (a non-secret key)
+   Prefer extending the existing rules 5b/5c over adding many new ones.
+   Keep the short comment style.
 
-extraSecrets: only values Repo2Prod itself generated/knows (e.g. from
-.repo2prod/resolved-config.json if Member A writes generated local secrets
-there). Never read .env.
+V10b In the database terminal-failure branch and the timeout branch, set
+     failedService to the matched row's Compose service name (row.service)
+     when a row matched; otherwise keep the manifest id.
+
+V11 In the database terminal-failure branch, use the container exit code
+    ONLY when the db state is exited/dead:
+      exited/dead: exitCode = row.exitCode, exitCodeSource 'container',
+                   detail "<name> (<id>) exited (code N)"
+      unhealthy:   exitCode null, exitCodeSource null,
+                   detail "<name> (<id>) unhealthy"
+      missing row: unchanged ("Manifest expects <name>; Compose has none")
 
 ==================================================
-FAILURE-MODE MATRIX (test each, report outcome)
-==================================================
-
-1. Docker Desktop stopped            -> FAIL at BUILDING, "Docker is not running…"
-2. Dockerfile syntax broken          -> FAIL at BUILDING (build)
-3. db never healthy (bad image tag)  -> FAIL at STARTING (database)
-4. sandbox-sarmad (SQLite volume bug) -> FAIL at STARTING (app exited 1,
-                                       "unable to open database file"), latest.json written
-4b. C1 fixture defect (if built)     -> FAIL at STARTING (app exits, localhost:5432)
-5. health returns 503/404            -> FAIL at VERIFYING_HEALTH
-6. a test deliberately failing       -> FAIL at RUNNING_TESTS
-7. After Bob's /repo2prod-repair      -> VERIFIED (sandbox: app PASS, health WARN
-                                       no endpoint, tests NOT_RUN; fixture: all PASS)
-8. Cancel during build               -> clean cancellation message, no hang
-9. Reset Run + reset script          -> only Repo2Prod project resources removed
-
-Revert every deliberate breakage after testing; reset the fixture.
-
-==================================================
-NO SCOPE EXPANSION
-==================================================
-
-No automatic repair, no automatic retry, no Bob invocation, no CI generation,
-no readiness report UI (Member A/B), no new dependencies.
-
-==================================================
-COMPILATION / VALIDATION
+VALIDATION (no Docker, no Bob skills)
 ==================================================
 
 1. pnpm compile
-2. pnpm run package (or pnpm exec vsce package) and install the VSIX in Bob
-3. No pnpm test
+2. No pnpm test.
+3. node scripts/diagnostics-check.cjs: all PASS, including the new cases
+   (FAKE values only): the 3 leak forms above, "KEY": 'value', idempotence
+   for each, and the survival list above.
+4. git diff --stat: only the 3 files above.
 
 ==================================================
-MANUAL DEVELOPMENT TEST (in IBM Bob)
+FINAL REPORT (compact)
 ==================================================
 
-First target: a fresh copy of ~/Desktop/sandbox-sarmad-failing-baseline
-opened in Bob (Bob's runtime files already exist, so /repo2prod can be
-skipped to save Bobcoins if the run state is already
-WAITING_FOR_BOB_PRODUCTIONIZATION for this folder; otherwise
-Start Productionization -> approve -> /repo2prod).
-1. Open the sandbox copy in Bob
-2. Ensure state WAITING_FOR_BOB_PRODUCTIONIZATION (re-run Start + approve
-   if the copied run-state points at another machine)
-3. (only if needed) /repo2prod in Bob Agent mode
-4. Repo2Prod: Verify Runtime -> app FAIL at STARTING -> DIAGNOSTIC_READY,
-   latest.json contains "unable to open database file"
-5. Repo2Prod: Prepare Repair -> /repo2prod-repair in Bob Agent
-6. Repo2Prod: Verify Runtime -> VERIFIED
-7. Check .repo2prod/run-state.json phases and repairAttempts
-
-==================================================
-FINAL REPORT
-==================================================
-
-1. Files modified (and which lines in Member A's files)
-2. Phase -> orchestrator hook mapping
-3. Failure-mode matrix results (actual)
-4. Example latest.json
-5. Final run-state.json after success
-6. pnpm compile / package result
-7. Integration risks for demo day
+1. The changed regex/rule lines in redaction.ts (short)
+2. V10b/V11 changed lines (short snippets)
+3. diagnostics-check totals (+ any FAIL)
+4. pnpm compile result and git diff --stat
 
 Do not implement anything outside this task.
 ```
 
 ---
 
-### 8.7 — C6: Health endpoint in the /repo2prod skill (paired with Member A)
+### 8.5 — C5: Wire Verify Runtime (Member A's Task 7, paired)
 
-> **Why:** "the container is running" doesn't prove the deployment worked, and most repos (e.g. sandbox-sarmad, which only has `/admin/`) have nothing to probe. This task makes Bob find or create a real health endpoint during `/repo2prod`, so Repo2Prod can **observe** success. **Skill files belong to Member A.** Get their OK, or let them run this prompt.
-> **Guardrails:** the endpoint must genuinely check the app's dependencies. An always-200 endpoint would be a fake PASS. Bob may **not** add tests in this task, so no test PASS gets inflated.
+> Rewritten 2026-09-27, and updated after R1/V10b/V11 were verified: the prompt now also states that WARN/NOT_RUN don't block VERIFIED, and adds a skill-sync check. It edits Member A's `verifyRuntime.ts` and adds one method, `recordVerification`, to their orchestrator (get their OK). It also closes gap 15: the run state is restored after a Bob reload. The progress notification is deliberately **not cancellable**, because the state machine has no cancel route. Internal errors go to FAILED and never write `latest.json`.
 
 ```text
 Read @AGENTS.md completely before making any changes.
 
-I am Member C of Repo2Prod, pairing with Member A (owner of Bob skills).
+I am Member C of Repo2Prod, pairing with Member A on Task 7.
+Member A has approved the edits to their two files listed below.
 
-This is Task C6: extend the /repo2prod Bob skill so Bob ensures the target
-application exposes a real health endpoint and declares it for Repo2Prod's
-verifier.
+This is Task C5: wire the real verifier and failure diagnostics into the
+"Repo2Prod: Verify Runtime" command.
 
 IMPORTANT CONTEXT
 
-Repo2Prod installs static Bob skills into the TARGET repository:
-  .bob/skills/repo2prod/SKILL.md
-  .bob/skills/repo2prod-repair/SKILL.md
-Their content lives in TWO places that must stay identical:
-  templates/bob-skills/<name>/SKILL.md
-  src/core/bobSkills.ts  (inline SkillDefinition strings, "must stay in sync
-                          with templates/bob-skills/*/SKILL.md")
-The installer overwrites existing skill files on install.
+Why: all the execution code exists, is tested, and is committed, but
+nothing in the extension calls it. Today src/commands/verifyRuntime.ts moves
+the state to BUILDING and then shows "verification implementation
+pending". Nothing outside src/execution/ calls runVerification,
+createFailureBundle or writeFailureBundle.
 
-Latest main (821338d) made .repo2prod/resolved-config.json optional in the
-/repo2prod skill. Keep that behaviour.
+Done and committed (do NOT modify): C1 fixture, C2 runner/compose, C3
+verifier, C4 redaction + diagnostics, C6 health-endpoint skill step, and the
+follow-up fixes R1 (quoted-value redaction), V10b and V11 (database failure
+fields).
 
-Problem observed: in the real sandbox (Django + SQLite, only /admin/ route)
-there is no health endpoint, so Repo2Prod's verifier can only do a smoke
-probe of "/" (404 -> WARN) and can never prove the deployment succeeded.
+Ready to use:
+- src/execution/verifier.ts:
+    buildVerifyOptions(workspaceRoot, manifest)
+    runVerification(options, runner, onPhase, signal?)
+      -> VerificationOutcome { result, failedPhase, cancelled, failure }
+    onPhase is called with 'BUILDING' | 'STARTING' | 'VERIFYING_HEALTH' |
+    'RUNNING_TESTS'. Success means failure === null; RUNNING_TESTS is always
+    reached on success. WARN (e.g. health with no endpoint) and NOT_RUN
+    (e.g. no tests) checks do NOT block success; only a failure object does.
+- src/execution/processRunner.ts: runProcess
+- src/execution/diagnostics.ts:
+    createFailureBundle({ attempt, outcome, workspaceRoot, previous?, extraSecrets? })
+    writeFailureBundle(workspaceRoot, bundle)  -> path of latest.json
+    clearDiagnostics(workspaceRoot)
+- src/core/redaction.ts: redactText
+- Member A's orchestrator (src/core/orchestrator.ts):
+    markBobProductionizationComplete, markBobRepairComplete (-> BUILDING),
+    beginStarting, beginVerification, beginTests, markVerified,
+    recordFailure(bundle) (-> DIAGNOSTIC_READY), fail() (FAILED is valid
+    from DIAGNOSTIC_READY), repairAttemptsUsed(), runState(), currentState(),
+    loadPersistedState(workspaceRoot). State is saved via saveRunState in its
+    private applyTransition.
+- src/core/state.ts: Repo2ProdState, MAX_REPAIR_ATTEMPTS = 2 (do not change)
 
-Repo2Prod rule (AGENTS.md §12): PASS requires observed execution. The
-declaration file Bob writes is only a hint of WHERE to probe; the verifier
-must still observe HTTP 200 itself.
+Two gaps this task closes:
+1. Nothing stores the VerificationResult (RunState.verification has no
+   setter). Member A's final report (Task 8) needs it.
+2. The extension never restores .repo2prod/run-state.json on activation.
+   After a Bob window reload (often needed for skill discovery), the
+   in-memory state is IDLE and Verify Runtime refuses to run.
 
 ==================================================
-OWNERSHIP / SCOPE
+SCOPE
 ==================================================
 
-Modify only:
+FILES TO MODIFY (nothing else):
+  src/commands/verifyRuntime.ts    (Member A's file; approved) rewrite the handler body
+  src/core/orchestrator.ts         (Member A's file; approved) ADD ONLY one method:
+      recordVerification(result: VerificationResult): void
+      It sets state.verification and saves it the same way applyTransition
+      does (saveRunState; on a save error, show a warning, don't throw).
+      No transition, and no other change.
+
+FILES YOU MUST NOT TOUCH:
+  src/core/state.ts (transitions, MAX_REPAIR_ATTEMPTS), types.ts, schemas/**,
+  src/execution/**, src/core/redaction.ts, src/core/bobSkills.ts,
+  other src/commands/*.ts, src/extension.ts, src/webview/**, templates/**,
+  test-fixtures/**, scripts/**, docs/**, package.json.
+
+==================================================
+BEHAVIOUR (in this order)
+==================================================
+
+1. Workspace root: the same way startProductionization gets it
+   (vscode.workspace.workspaceFolders[0].uri.fsPath). No folder -> clear
+   error message.
+2. If orchestrator.currentState() is IDLE, call
+   orchestrator.loadPersistedState(root) first (restores the run after a
+   Bob window reload). Then keep the existing state guard: only
+   WAITING_FOR_BOB_PRODUCTIONIZATION or WAITING_FOR_BOB_REPAIR, with the
+   existing error message.
+3. Before moving state, remember:
+   - firstRun = state is WAITING_FOR_BOB_PRODUCTIONIZATION and
+     repairAttemptsUsed() === 0
+   - previous = orchestrator.runState().failure (the last bundle, or null)
+   If firstRun, call clearDiagnostics(root) (removes a previous run's files).
+4. Keep the existing markBobProductionizationComplete() /
+   markBobRepairComplete() call (-> BUILDING).
+5. manifest = orchestrator.runState().manifest. If it is null, use the
+   internal-error path (step 10).
+6. Run inside vscode.window.withProgress (Notification, title
+   "Repo2Prod: verifying runtime", cancellable: FALSE). The state machine has
+   no cancel route; per-command timeouts already bound the run. Pass no
+   AbortSignal. Report progress text on each phase.
+7. options = await buildVerifyOptions(root, manifest);
+   outcome = await runVerification(options, runProcess, onPhase), where onPhase maps:
+     BUILDING -> nothing (already BUILDING)
+     STARTING -> orchestrator.beginStarting()
+     VERIFYING_HEALTH -> orchestrator.beginVerification()
+     RUNNING_TESTS -> orchestrator.beginTests()
+   (If a hook throws, it surfaces through runVerification and is handled
+   by the internal-error path.)
+8. Always call orchestrator.recordVerification(outcome.result).
+9a. Success (outcome.failure === null and not cancelled):
+    orchestrator.markVerified(). Info message, e.g.
+    "Repo2Prod: runtime VERIFIED (health PASS, tests PASS). Next: Repo2Prod: Prepare CI."
+    (use the real statuses of health and tests, including WARN/NOT_RUN).
+9b. Failure:
+    bundle = await createFailureBundle({
+      attempt: orchestrator.repairAttemptsUsed(), outcome, workspaceRoot: root,
+      previous: (previous && repairAttemptsUsed() > 0)
+                ? { attempt: previous.attempt, phase: previous.phase } : null });
+    await writeFailureBundle(root, bundle); orchestrator.recordFailure(bundle);
+    Then:
+    - If repairAttemptsUsed() >= MAX_REPAIR_ATTEMPTS: orchestrator.fail() and
+      error "Repair limit reached (2/2). Repo2Prod stopped to avoid further
+      Bobcoin usage. See .repo2prod/diagnostics/latest.json." (AGENTS.md §13)
+    - Else: error "Repo2Prod: verification failed at <PHASE> - <failing check
+      detail>. Run 'Repo2Prod: Prepare Repair', then /repo2prod-repair in Bob
+      Agent mode." with an "Open diagnostics" button that opens latest.json.
+9c. outcome.cancelled (should not happen, since nothing can cancel) ->
+    internal-error path.
+10. Internal-error path (any exception after the state left WAITING_*, or a
+    null manifest): if the state is BUILDING/STARTING/VERIFYING_HEALTH/
+    RUNNING_TESTS, build a minimal bundle { attempt: repairAttemptsUsed(),
+    phase: currentState(), command: null, exitCode: null,
+    redactedExcerpt: "Repo2Prod internal error: " + redactText(message),
+    truncated: false }, then call orchestrator.recordFailure(bundle) and
+    orchestrator.fail(). Do NOT write latest.json (Bob must not "repair" a
+    Repo2Prod bug). Error message: "Repo2Prod internal error during
+    verification: <message>. Run 'Repo2Prod: Reset Run' to start over."
+    Never leave the run stuck in an execution state.
+11. Output channel "Repo2Prod" (create it once, lazily, in this file): one
+    line per phase and one per check (id, status, detail), plus the
+    latest.json path on failure. Everything goes through redactText. Never
+    write raw logs to it.
+
+==================================================
+NO REDUNDANT WORK / SCOPE LIMITS
+==================================================
+
+- Reuse the functions above; no new Docker, verifier, or diagnostics logic.
+- No auto-repair, no auto-retry, no Bob invocation, no CI, no readiness
+  report (Member A, Task 8), no webview changes, no new dependencies.
+- Do not change the transition map or MAX_REPAIR_ATTEMPTS.
+
+==================================================
+COMMENTS AND STYLE
+==================================================
+
+Short comments only where the "why" isn't obvious (why state is restored
+on IDLE, why the progress is not cancellable, why internal errors skip
+latest.json, why previous is read before recordFailure). 1 line, 2 max.
+Update the file header comment of verifyRuntime.ts to describe the real
+behaviour.
+
+==================================================
+VALIDATION (Bob does NOT run Bob skills or the extension here)
+==================================================
+
+1. pnpm compile
+2. No pnpm test.
+3. pnpm run package -> a .vsix is produced (don't commit it; it's gitignored)
+4. grep -n "implementation pending" src/commands/verifyRuntime.ts -> nothing
+5. node scripts/check-skill-sync.cjs -> still all IN SYNC (nothing touched skills)
+6. git diff --stat: only the 2 files in scope.
+
+==================================================
+FINAL REPORT (compact)
+==================================================
+
+1. Files changed; the new orchestrator method (full, it's short)
+2. The verifyRuntime flow as a short numbered list, with line refs
+3. Phase -> orchestrator hook mapping as implemented
+4. The exact user-facing messages (success, failure, limit, internal error)
+5. pnpm compile / package results and git diff --stat
+6. Risks for the manual in-IDE test
+
+Do not implement anything outside this task.
+```
+
+**Manual in-IDE test after C5 (costs 0 Bobcoins, so no Bob skills are needed):**
+1. `scripts/reset-demo-fixture.sh`. Install the new VSIX in Bob, open `~/repo2prod-demos/golden-demo`, then run Start Productionization → Approve. The state becomes `WAITING_FOR_BOB_PRODUCTIONIZATION`.
+2. Skip `/repo2prod`: the fixture already has a Dockerfile and `compose.yaml`. Run **Verify Runtime** → you should get a real failure ("app exited with code 1"), state `DIAGNOSTIC_READY`, and `.repo2prod/diagnostics/latest.json` written.
+3. **Prepare Repair** (attempt 1/2) → state `WAITING_FOR_BOB_REPAIR`. To test without spending Bobcoins, apply the known fix by hand (`POSTGRES_HOST: db` in the demo copy) instead of running `/repo2prod-repair`.
+4. **Verify Runtime** → state `VERIFIED` (health PASS, tests PASS). Check that `run-state.json` has `verification.checks` and `repairAttempts: 1`.
+5. Optional: reload the Bob window, then Verify Runtime from a `WAITING_*` state still works (gap 15).
+6. `docker compose -p repo2prod-golden-demo down -v`, then run the reset script.
+The real Bob runs (`/repo2prod`, `/repo2prod-repair`) are saved for the dry run and the judged demo.
+
+---
+
+### 8.7 — C6: Health endpoint in the /repo2prod skill (paired with Member A)
+
+> **Updated 2026-09-27.**
+> - **Why:** a running container doesn't prove the deployment works, and repos without a health endpoint can reach at most WARN.
+> - **Verifier side is already done (C3):** it reads `.repo2prod/health-endpoint.json`, strictly requires `path` starting with `/`, `method: "GET"` and `expectStatus: 200` (a number), and PASSes only on an observed 200.
+> - **This task is text-only.** It edits Member A's skill files (get their OK first) and should cost only about 1–2 Bobcoins. It must not run any Bob skill.
+> - **Keep the two copies identical.** The installer writes the **inline** strings in `src/core/bobSkills.ts`; `templates/` are reference copies. Both matched on 2026-09-27, and `scripts/check-skill-sync.cjs` guards that from now on.
+> - **Guardrails:** the endpoint must really check dependencies (an always-200 endpoint would be a fake PASS), and Bob must not add tests.
+
+```text
+Read @AGENTS.md completely before making any changes.
+
+I am Member C of Repo2Prod, pairing with Member A (the owner of the Bob skills).
+Member A has approved this change.
+
+This is Task C6: extend the /repo2prod Bob skill so Bob makes sure the
+target app has a real health endpoint and declares it for Repo2Prod's
+verifier. Also add one guard paragraph to the /repo2prod-repair skill.
+
+IMPORTANT CONTEXT
+
+Why: "the container is running" does not prove a deployment works, and
+many repos have no health endpoint at all. The team's sandbox app only has
+/admin/, so Repo2Prod can report at most WARN there, never an observed
+health PASS.
+
+The Repo2Prod verifier (src/execution/verifier.ts, task C3) ALREADY reads
+.repo2prod/health-endpoint.json. Do NOT change the verifier. It accepts the
+file only if all of these hold:
+  "path"         is a string starting with "/"
+  "method"       is exactly "GET"
+  "expectStatus" is the NUMBER 200 (not the string "200")
+Otherwise it ignores the file and probes /health/ and /healthz. Even with a
+valid file, PASS still requires an HTTP 200 that the verifier observes
+itself. The file only says WHERE to look.
+
+Where the skill text lives (both copies must stay IDENTICAL):
+  src/core/bobSkills.ts               inline SkillDefinition `content` strings.
+                                      THIS is what the installer writes into
+                                      the target's .bob/skills/<name>/SKILL.md.
+  templates/bob-skills/<name>/SKILL.md  reference copies ("must stay in sync")
+Today all three skills are in sync. Keep them that way.
+The inline strings are TypeScript template literals: escape every backtick
+as \` and every "${" as "\${" inside them.
+
+Keep the existing behaviour: evidence.json and runtime-manifest.json are
+required; resolved-config.json is optional (main 821338d).
+
+==================================================
+SCOPE
+==================================================
+
+FILES TO MODIFY / CREATE (nothing else):
   templates/bob-skills/repo2prod/SKILL.md
-  templates/bob-skills/repo2prod-repair/SKILL.md   (one guard paragraph)
-  src/core/bobSkills.ts                            (mirror the same text)
-Do NOT change skill names, the installer logic, state machine,
-orchestrator, analyzers, or execution code in this task.
-Do NOT modify any target/sandbox repository.
+  templates/bob-skills/repo2prod-repair/SKILL.md
+  src/core/bobSkills.ts            ONLY the two matching `content` strings
+  scripts/check-skill-sync.cjs     NEW, small (~30–40 lines): compares each
+                                   inline `content` string (after unescaping
+                                   \` and \${) with its template file and
+                                   prints IN SYNC / DIFFERENT per skill;
+                                   exits 1 on any difference
+  scripts/README.md                ONE line for check-skill-sync.cjs
+
+FILES YOU MUST NOT TOUCH:
+  the /repo2prod-ci skill (both copies), the skill names and frontmatter,
+  the installer logic in bobSkills.ts, src/execution/** (including the
+  verifier), src/core/state.ts, orchestrator.ts, types.ts, src/commands/**,
+  src/analyzers/**, schemas/**, test-fixtures/**, docs/**, package.json.
+Do not modify any target or demo repository.
 
 ==================================================
-GOAL
+CHANGE 1: /repo2prod skill
 ==================================================
 
-Add a new numbered step to the /repo2prod skill, placed after "Create or
-minimally repair the local Docker runtime" and before the final summary:
+Add a new numbered step right AFTER "Create or minimally repair the local
+Docker runtime", and renumber the steps after it:
 
   **Ensure a health endpoint exists**
-  1. Search the repository for an existing health/readiness endpoint
-     (e.g. routes/views named health, healthz, ready, status, ping).
+  1. Look for an existing health/readiness endpoint in the application
+     (e.g. routes or views named health, healthz, ready, status, ping).
   2. If one exists and it returns HTTP 200 only when the app can serve
-     requests, reuse it. Do not duplicate it.
-  3. If none exists, create the smallest possible one using the project's
-     existing framework conventions:
-     - GET /health/ (Django: a small view + one urls.py entry; no new
-       dependencies, no new app unless unavoidable)
-     - returns 200 with JSON {"status":"ok", ...} when healthy
-     - if the app uses a database, it must actually check it
-       (e.g. a trivial SELECT 1 / connection check) and return 503 with
-       {"status":"error"} when the check fails
-     - must not require authentication, must not be blocked by CSRF for GET,
-       must work with the ALLOWED_HOSTS / host settings used in the local
-       container (requests will come from the host to 127.0.0.1/localhost)
-     - must never expose secrets, env values, connection strings, stack
-       traces, or version details
-     - must NOT be hard-coded to always return 200
-  4. Do not add or modify tests in this step.
-  5. Write .repo2prod/health-endpoint.json exactly in this shape:
+     requests, reuse it. Do not create a duplicate.
+  3. If none exists, add the smallest possible one using the project's own
+     framework conventions (for Django: one small view and one URL entry;
+     no new dependencies, no new app unless unavoidable):
+     - GET /health/ returns 200 with JSON {"status": "ok"} when healthy.
+     - If the app uses a database, the endpoint must really check it
+       (e.g. a trivial SELECT 1) and return 503 with {"status": "error"}
+       when that check fails.
+     - No authentication, and it must work for plain GET requests (no CSRF
+       token needed).
+     - It must work with the host settings used by the local container;
+       Repo2Prod probes it from the host at 127.0.0.1.
+     - It must never expose secrets, env values, connection strings, stack
+       traces, or version details.
+     - It must NOT be hard-coded to always return 200.
+  4. This step only adds or declares the endpoint. Do not change other
+     application code in this step, and do not add or modify tests.
+  5. Write .repo2prod/health-endpoint.json in exactly this shape
+     (expectStatus is a number):
      {
        "path": "/health/",
        "method": "GET",
        "expectStatus": 200,
-       "checks": ["database"],          // [] if no dependency is checked
-       "source": "existing" | "created-by-bob",
+       "checks": ["database"],
+       "source": "existing",
        "files": ["<repo-relative files that define the endpoint>"]
      }
-  6. In the final summary, state the health path, whether it was existing
-     or created, and what it checks. Do not claim it works — Repo2Prod will
-     verify it.
+     Use "checks": [] if no dependency is checked, and "source":
+     "created-by-bob" if you created the endpoint.
 
-Also update step 4 ("Do not refactor unrelated application code") so it
-explicitly allows the minimal health-endpoint change above and nothing else.
+Update the "Do not refactor unrelated application code" step so it
+explicitly allows the minimal health-endpoint change above, and nothing else.
 
-In the /repo2prod-repair skill add one paragraph:
+Extend the final summary step with: the health path, whether it existed
+or was created, and what it checks. Do not claim it works; Repo2Prod
+verifies it.
+
+==================================================
+CHANGE 2: /repo2prod-repair skill
+==================================================
+
+- Add .repo2prod/health-endpoint.json as an OPTIONAL file to read
+  ("if it exists").
+- Add one paragraph:
   "Do not remove, bypass, or weaken the health endpoint declared in
    .repo2prod/health-endpoint.json. If the health check failed, fix the
    underlying cause, not the check. Only change the endpoint if the
    diagnostic shows the endpoint itself is broken, and keep
    .repo2prod/health-endpoint.json accurate."
 
-Keep both skills short and phase-specific (AGENTS.md §19).
+Keep both skills short and phase-specific (AGENTS.md §19). Keep wording
+general (not fixture-specific). Never mention the demo, the fixture, or
+any known defect.
 
 ==================================================
 NO SCOPE EXPANSION
 ==================================================
 
-Do NOT add: metrics/monitoring endpoints, auth changes, new packages,
-readiness percentages, tests, CI, cloud config, a generic multi-framework
-health library, or verifier/execution code.
+Do NOT add: metrics or monitoring endpoints, auth changes, new packages,
+tests, CI changes, readiness percentages, a multi-framework health
+library, verifier changes, or instructions tuned to any specific repo.
 
 ==================================================
-COMPILATION / VALIDATION
+VALIDATION (no Docker needed, no Bob skill runs)
 ==================================================
 
 1. pnpm compile
-2. No pnpm test (does not exist).
-3. Diff the template SKILL.md files against the inline strings in
-   src/core/bobSkills.ts — they must match exactly (report how you checked).
-4. Confirm skill frontmatter (name, description, user-invocable) unchanged.
+2. There is no pnpm test. Do not invent it.
+3. node scripts/check-skill-sync.cjs -> all 3 skills IN SYNC
+4. Frontmatter (name, description, user-invocable) is unchanged for both skills.
+5. git diff --stat: only the files in scope.
+Do NOT run /repo2prod or any other Bob skill in this session.
 
 ==================================================
-MANUAL DEVELOPMENT TEST
+FINAL REPORT (compact)
 ==================================================
 
-1. pnpm compile && package/install the VSIX in Bob.
-2. Open a COPY of the sandbox (never the failing baseline):
-   run "Repo2Prod: Install Bob Skills" and confirm
-   .bob/skills/repo2prod/SKILL.md contains the new health step
-   (reload Bob if the skill text is stale).
-3. Only if the team agrees to spend the Bobcoin: run /repo2prod on a
-   fresh copy and confirm Bob creates /health/ + writes
-   .repo2prod/health-endpoint.json, without fixing unrelated code.
-4. Record whether Bob ALSO fixed the SQLite volume bug while doing this
-   (important for the demo story — see member-c-reference §2A).
-
-==================================================
-FINAL REPORT
-==================================================
-
-1. Files modified
-2. Final text of the new /repo2prod step
-3. Final text of the repair-skill guard paragraph
-4. How template/inline sync was verified
-5. health-endpoint.json contract
-6. pnpm compile result
-7. Manual test results (if run)
-8. Risks (e.g. Bob touching more app code than intended, skill reload)
+1. Files changed
+2. The full new "Ensure a health endpoint exists" step text
+3. The repair-skill additions (text)
+4. check-skill-sync output
+5. pnpm compile result and git diff --stat
+6. Risks (e.g. Bob changing more app code than intended; skill reload)
 
 Do not implement anything outside this task.
 ```
 
-**Verifier side of C6** (already built into the C3 prompt, §8.3):
-| Situation | `health` result |
-|---|---|
-| Valid `.repo2prod/health-endpoint.json`, GET returns 200 | **PASS**, observed. Deployment proven. |
-| Declared path returns 503 / 5xx / 404 / 400 (e.g. ALLOWED_HOSTS) / refused / timeout | **FAIL**, observed, which goes into the FailureBundle so `/repo2prod-repair` can fix it |
-| No declaration file, or it's invalid | fall back to a smoke probe of `/`: status < 500 gives **WARN**, otherwise FAIL |
-| Earlier phase failed | NOT_RUN |
+**After C6: one combined `/repo2prod` dry run (about 1–2 Bobcoins).** It answers two open questions at once:
+1. `pnpm compile`, package and install the VSIX in Bob, then run `scripts/reset-demo-fixture.sh`.
+2. Open `~/repo2prod-demos/golden-demo` in Bob, then run Start Productionization → Approve. Approve installs the new skill; reload Bob if the skill text looks old.
+3. Run `/repo2prod` once in Bob Agent mode, then check:
+   - **Declared health:** `.repo2prod/health-endpoint.json` exists, with `"path": "/health/"` and `"source": "existing"`. The fixture already has `/health/`, so Bob should declare it, not create a new one.
+   - **Defect survival (gap 3):** does `compose.yaml` still lack `POSTGRES_HOST`? If Bob fixed it, raise it with the team. Never fake the failure.
+   - **Scope:** Bob changed no other application code.
+4. Run `scripts/reset-demo-fixture.sh` afterwards.
 
-**Effect on sandbox-sarmad (§2A):** Bob already ran `/repo2prod` there with the old skill, so there's no `/health/` yet. For now the sandbox keeps the expectation "health WARN after repair". Once C6 lands and `/repo2prod` runs again on a fresh copy, the expected end state becomes **health PASS** (observed 200 with a DB check).
+**Effect on sandbox-sarmad (§2A):** it was productionized with the old skill, so it has no `/health/`. A fresh `/repo2prod` run with the new skill should turn health from WARN into an observed PASS.
+
+---
 
 ### 8.6 — Support prompts
 
@@ -2137,8 +2305,9 @@ Never add global prune commands.
 | C2 | `necromancers_task13_fixture_bob_productionize_dryrun_summary.png`: **misnamed**, since the screenshot shows the C2 session. Rename it to `necromancers_task13_process_docker_compose_summary.png`. | 4.82 |
 | C3 | `necromancers_task14_verification_engine_summary.png` | 10.19 |
 | C4 | `necromancers_task15_redaction_diagnostics_summary.png` | 7.10 |
+| C6 | `necromancers_task16_health_endpoint_check_summary.png` (delete the duplicate `... summary copy.png`) | 1.42 |
 
-*Update 2026-09-27:* about **27.9 / 40 used, roughly 12 left**. The C1 file was renamed to `task12`. The V1–V8 fixes were not a Bob session, so there's no screenshot. The remaining plan is tight: C5 ≈ 4–5, the fixture `/repo2prod` dry run ≈ 1–2, and demo runs ≈ 6. Fold R1/V10b/V11 into C5 rather than a new session, and consider running the judged demo's `/repo2prod` + repair from a teammate's Bob account if your budget runs short.
+*Update 2026-09-27 (after C6):* about **29.3 / 40 used, roughly 10.7 left**. (Before C6: about 27.9.) The C1 file was renamed to `task12`. The V1–V8 fixes were not a Bob session, so there's no screenshot. The remaining plan is tight: C5 ≈ 4–5, the fixture `/repo2prod` dry run ≈ 1–2, and demo runs ≈ 6. Fold R1/V10b/V11 into C5 rather than a new session, and consider running the judged demo's `/repo2prod` + repair from a teammate's Bob account if your budget runs short.
 
 Used so far: about **20.8 / 40**, leaving roughly **19**. C3 cost twice the plan, because the prompt was long (context reached 110k tokens) and there were many smoke scenarios. Plan from here:
 - C4 ≈ 4–5 (tight prompt; V1–V8 folded in);
@@ -2243,7 +2412,11 @@ Append new entries here as decisions are made (date — decision — why).
 - 2026-09-27 — Bobcoin budget is tight (about 19 left). C4/C5 prompts must be shorter, with fewer scenarios.
 - 2026-09-27 — V1–V8 accepted (separate Bob session, at the user's request). V9 (don't report a restart-loop exit code, since `ps` shows 0) and V10 (consistent `failedService`/`exitCodeSource`) are folded into C4 Part 0.
 - 2026-09-27 — C4 accepted (diagnostics verified on the real fixture). R1 (quoted-value redaction leaks, proven with fake values), V10b and V11 are folded into C5 Part 0. The budget is about 12 Bobcoins left.
-- 2026-09-27 — C4 keeps FailureBundle unchanged (gap 1 not approved). Header inside `redactedExcerpt`; diagnostics files are `attempt-<n>.json` + `latest.json`; limits 150 lines / 12 KiB; redact first, then bound.
+- 2026-09-27 — C4 keeps FailureBundle unchanged (gap 1 not approved).
+- 2026-09-27 — R1/V10b/V11 fixes verified. Built into scratch and probed with fake values: all 4 quoted forms are redacted and idempotent, and the safe lines survive. The database branch reports a container exit code only when the container exited. The commit is pending, together with C6.
+- 2026-09-27 — Prompts written: §8.4b (R1/V10b/V11 fixes, separate session at the user's request) and §8.5 (C5 wiring). Gaps 15 (no state restore after reload) and 16 (no verification setter) are handled in C5. C5's first in-IDE test uses the known manual fix instead of `/repo2prod-repair`, to save Bobcoins.
+- 2026-09-27 — C6 accepted (1.42 Bobcoins). The skills are verified byte-identical to the templates, and the CI skill is untouched. Member A will own the final report (Task 8). The C5 (Task 7) owner still needs agreeing, but C is proposed, since all the execution code is C's.
+- 2026-09-27 — C6 prompt finalized (§8.7). It's text-only in Member A's skill files, with a new `scripts/check-skill-sync.cjs`. Its acceptance test is the same single `/repo2prod` dry run that also checks defect survival (gap 3). Header inside `redactedExcerpt`; diagnostics files are `attempt-<n>.json` + `latest.json`; limits 150 lines / 12 KiB; redact first, then bound.
 
 ---
 

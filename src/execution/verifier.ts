@@ -387,19 +387,24 @@ export async function runVerification(
         const { svc, row } = firstFail;
         const logsResult = await composeLogs(ctx, row?.service ?? svc.id, 120);
         const logText = logsResult.ok ? logsResult.run.stdout : '';
+        // Only an exited/dead container has a real exit code; an unhealthy one is still running.
+        const state = row?.state.toLowerCase() ?? '';
+        const exited = row !== undefined && (state.includes('exit') || state === 'dead');
+        const exitCode = exited ? row.exitCode : null;
         if (row === undefined) {
           dbCheck = makeCheck('database', 'FAIL', true, `Manifest expects ${svc.name}; Compose has none`);
-        } else {
-          const state = row.state.toLowerCase();
-          const exitInfo = row.exitCode !== null ? ` (code ${row.exitCode})` : '';
+        } else if (exited) {
+          const exitInfo = exitCode !== null ? ` (code ${exitCode})` : '';
           dbCheck = makeCheck('database', 'FAIL', true, `${svc.name} (${svc.id}) ${state}${exitInfo}`);
+        } else {
+          dbCheck = makeCheck('database', 'FAIL', true, `${svc.name} (${svc.id}) unhealthy`);
         }
         dbFailure = {
           checkId: 'database',
           command: null,
-          exitCode: row?.exitCode ?? null,
-          exitCodeSource: row ? 'container' : null,
-          failedService: svc.id,
+          exitCode,
+          exitCodeSource: exitCode !== null ? 'container' : null,
+          failedService: row?.service ?? svc.id,
           rawOutputTail: tailLines(logText, 120),
           truncated: logsResult.run?.stdoutTruncated ?? false,
         };
@@ -427,7 +432,7 @@ export async function runVerification(
         dbCheck = makeCheck('database', 'FAIL', true, `${svc.name} (${svc.id}) not ready after ${VERIFY_TIMEOUTS_MS.dbReady / 1000}s`);
         dbFailure = {
           checkId: 'database', command: null, exitCode: null, exitCodeSource: null,
-          failedService: svc.id,
+          failedService: row?.service ?? svc.id,
           rawOutputTail: tailLines(logText, 120),
           truncated: logsResult.run?.stdoutTruncated ?? false,
         };
