@@ -131,3 +131,7 @@ out/
 
 # Local manual-test folders (Member B)
 sandbox/
+
+# Local planning docs (keep out of the repo)
+Repo2Prod — Team Execution Plan & Build Spec v0.4.pdf
+*Team Execution Plan*.pdf

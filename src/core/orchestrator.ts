@@ -18,7 +18,7 @@ import {
   resetRunState,
 } from './state';
 import { bobSkillManager } from './bobSkills';
-import type { RunState, FailureBundle, Evidence, RuntimeManifest } from './types';
+import type { RunState, FailureBundle, Evidence, RuntimeManifest, VerificationResult } from './types';
 
 // ---------------------------------------------------------------------------
 // Repo2ProdOrchestrator
@@ -199,6 +199,24 @@ export class Repo2ProdOrchestrator {
   markBobRepairComplete(): void {
     this.assertCurrentState(Repo2ProdState.WAITING_FOR_BOB_REPAIR);
     this.transition(Repo2ProdState.BUILDING);
+  }
+
+  /**
+   * Records the VerificationResult from Member C without a state transition.
+   * Needed by Task 8 (final report) and persisted so a window reload survives.
+   */
+  recordVerification(result: VerificationResult): void {
+    this.state = { ...this.state, verification: result };
+    if (this.workspaceRoot) {
+      try {
+        saveRunState(this.workspaceRoot, this.state);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        void vscode.window.showWarningMessage(
+          `Repo2Prod: could not persist verification result: ${message}`,
+        );
+      }
+    }
   }
 
   /**
