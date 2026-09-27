@@ -187,14 +187,12 @@ function findInfraRow(services: ComposeServiceStatus[], id: string, name: string
     ?? services.find(s => s.image.toLowerCase().includes(name.toLowerCase()));
 }
 
-/** Returns true when a container is "running" and not unhealthy. */
-function isRunningOk(row: ComposeServiceStatus): boolean {
-  const state = row.state.toLowerCase();
-  const health = row.health.toLowerCase();
-  if (!state.includes('running')) return false;
-  // A healthcheck that is still starting is fine; only 'unhealthy' is terminal.
-  if (health === 'unhealthy') return false;
-  return true;
+/** "restarting" is a crash: Compose is cycling a failing container (e.g. restart: unless-stopped). */
+function isAppCrashState(state: string): 'restarting' | 'exited' | null {
+  const s = state.toLowerCase();
+  if (s.includes('restarting')) return 'restarting';
+  if (s.includes('exit') || s === 'dead') return 'exited';
+  return null;
 }
 
 /** Returns true when a container is fully ready (running + healthy, or running + no healthcheck). */
@@ -279,7 +277,7 @@ export async function runVerification(
   if (isCancelled()) return cancel(['compose', 'build', 'database', 'app', 'health', 'tests']);
   if (!composeResult.ok || composeFile === null) {
     const detail = !composeResult.ok
-      ? (composeResult.run.stderr.trim() || 'docker compose not available')
+      ? 'docker compose is not available'
       : noComposeFileMessage(workspaceRoot);
     return fail(
       makeCheck('compose', 'FAIL', true, detail),
@@ -333,11 +331,22 @@ export async function runVerification(
     const dbDeadline = Date.now() + VERIFY_TIMEOUTS_MS.dbReady;
     let dbCheck: CheckResult | null = null;
     let dbFailure: VerificationOutcome['failure'] | null = null;
+    let lastDbPsError: string | null = null;
+    let lastDbServices: ComposeServiceStatus[] = [];
+    let dbHadSuccessfulPs = false;
 
     while (Date.now() < dbDeadline) {
       if (isCancelled()) return cancel(['database', 'app', 'health', 'tests']);
       const psResult = await composePs(ctx);
       if (isCancelled()) return cancel(['database', 'app', 'health', 'tests']);
+
+      if (!psResult.ok) {
+        lastDbPsError = psResult.error;
+        await new Promise<void>(r => setTimeout(r, VERIFY_TIMEOUTS_MS.pollInterval));
+        continue;
+      }
+      dbHadSuccessfulPs = true;
+      lastDbServices = psResult.services;
 
       let allReady = true;
       let firstFail: { svc: typeof infraServices[0]; row: ComposeServiceStatus | undefined } | null = null;
@@ -376,7 +385,7 @@ export async function runVerification(
       if (firstFail) {
         // Terminal failure: container exited or missing.
         const { svc, row } = firstFail;
-        const logsResult = await composeLogs(ctx, svc.id, 120);
+        const logsResult = await composeLogs(ctx, row?.service ?? svc.id, 120);
         const logText = logsResult.ok ? logsResult.run.stdout : '';
         if (row === undefined) {
           dbCheck = makeCheck('database', 'FAIL', true, `Manifest expects ${svc.name}; Compose has none`);
@@ -401,17 +410,28 @@ export async function runVerification(
     }
 
     if (dbCheck === null) {
-      // Timed out waiting for infra.
-      const svc = infraServices[0];
-      const logsResult = await composeLogs(ctx, svc.id, 120);
-      const logText = logsResult.ok ? logsResult.run.stdout : '';
-      dbCheck = makeCheck('database', 'FAIL', true, `${svc.name} (${svc.id}) not ready after ${VERIFY_TIMEOUTS_MS.dbReady / 1000}s`);
-      dbFailure = {
-        checkId: 'database', command: null, exitCode: null, exitCodeSource: null,
-        failedService: svc.id,
-        rawOutputTail: tailLines(logText, 120),
-        truncated: logsResult.run?.stdoutTruncated ?? false,
-      };
+      if (!dbHadSuccessfulPs) {
+        dbCheck = makeCheck('database', 'FAIL', true, 'Could not read container status');
+        dbFailure = {
+          checkId: 'database', command: null, exitCode: null, exitCodeSource: null,
+          failedService: infraServices[0].id,
+          rawOutputTail: lastDbPsError ?? '',
+          truncated: false,
+        };
+      } else {
+        // Timed out waiting for infra.
+        const svc = infraServices[0];
+        const row = findInfraRow(lastDbServices, svc.id, svc.name);
+        const logsResult = await composeLogs(ctx, row?.service ?? svc.id, 120);
+        const logText = logsResult.ok ? logsResult.run.stdout : '';
+        dbCheck = makeCheck('database', 'FAIL', true, `${svc.name} (${svc.id}) not ready after ${VERIFY_TIMEOUTS_MS.dbReady / 1000}s`);
+        dbFailure = {
+          checkId: 'database', command: null, exitCode: null, exitCodeSource: null,
+          failedService: svc.id,
+          rawOutputTail: tailLines(logText, 120),
+          truncated: logsResult.run?.stdoutTruncated ?? false,
+        };
+      }
     }
 
     checks.push(dbCheck);
@@ -445,11 +465,20 @@ export async function runVerification(
   const appDeadline = Date.now() + VERIFY_TIMEOUTS_MS.appStable;
   let appCheck: CheckResult | null = null;
   let appFailure: VerificationOutcome['failure'] | null = null;
+  let lastAppPsError: string | null = null;
+  let appHadSuccessfulPs = false;
 
   while (Date.now() < appDeadline) {
     if (isCancelled()) return cancel(['app', 'health', 'tests']);
     const psResult = await composePs(ctx);
     if (isCancelled()) return cancel(['app', 'health', 'tests']);
+
+    if (!psResult.ok) {
+      lastAppPsError = psResult.error;
+      await new Promise<void>(r => setTimeout(r, VERIFY_TIMEOUTS_MS.pollInterval));
+      continue;
+    }
+    appHadSuccessfulPs = true;
 
     const appRow = findAppRow(psResult.services, appService);
     if (!appRow) {
@@ -461,12 +490,14 @@ export async function runVerification(
       break;
     }
 
-    const state = appRow.state.toLowerCase();
-    if (state.includes('exit') || state === 'dead') {
-      // App crashed after `up -d` returned 0 — report the container exit code.
+    const crash = isAppCrashState(appRow.state);
+    if (crash) {
       const logsResult = await composeLogs(ctx, appService, 120);
       const logText = logsResult.ok ? logsResult.run.stdout : '';
-      appCheck = makeCheck('app', 'FAIL', true, `app exited with code ${appRow.exitCode ?? '?'} during startup`);
+      const detail = crash === 'restarting'
+        ? `app is restart-looping (last exit code ${appRow.exitCode ?? '?'})`
+        : `app exited with code ${appRow.exitCode ?? '?'} during startup`;
+      appCheck = makeCheck('app', 'FAIL', true, detail);
       appFailure = {
         checkId: 'app',
         command: upResult.command,
@@ -483,8 +514,15 @@ export async function runVerification(
   }
 
   if (appCheck === null) {
-    // App survived the stability window.
-    appCheck = makeCheck('app', 'PASS', true, 'running');
+    if (!appHadSuccessfulPs) {
+      appCheck = makeCheck('app', 'FAIL', true, 'Could not read container status');
+      appFailure = {
+        checkId: 'app', command: upResult.command, exitCode: null, exitCodeSource: 'command',
+        failedService: appService, rawOutputTail: lastAppPsError ?? '', truncated: false,
+      };
+    } else {
+      appCheck = makeCheck('app', 'PASS', true, 'running');
+    }
   }
 
   checks.push(appCheck);
@@ -500,6 +538,7 @@ export async function runVerification(
 
   // Determine the host port to probe.
   let hostPort: number | null = null;
+  let psFallbackError: string | null = null;
   if (appContainerPort !== null) {
     const portResult = await composePort(ctx, appService, appContainerPort);
     hostPort = portResult.hostPort;
@@ -507,8 +546,12 @@ export async function runVerification(
   if (hostPort === null) {
     // Fall back to first publishedPort from the latest ps row.
     const psFallback = await composePs(ctx);
-    const appRow = findAppRow(psFallback.services, appService);
-    hostPort = appRow?.publishedPorts[0]?.published ?? null;
+    if (!psFallback.ok) {
+      psFallbackError = psFallback.error;
+    } else {
+      const appRow = findAppRow(psFallback.services, appService);
+      hostPort = appRow?.publishedPorts[0]?.published ?? null;
+    }
   }
   if (isCancelled()) return cancel(['health', 'tests']);
 
@@ -517,7 +560,7 @@ export async function runVerification(
       makeCheck('health', 'FAIL', true, 'App publishes no port; cannot probe health'),
       'VERIFYING_HEALTH',
       ['tests'],
-      { checkId: 'health', command: null, exitCode: null, exitCodeSource: null, failedService: appService, rawOutputTail: '', truncated: false },
+      { checkId: 'health', command: null, exitCode: null, exitCodeSource: null, failedService: appService, rawOutputTail: psFallbackError ?? '', truncated: false },
     );
   }
 
@@ -526,9 +569,9 @@ export async function runVerification(
   let healthCheck: CheckResult | null = null;
   let healthFailure: VerificationOutcome['failure'] | null = null;
 
-  // Track attempts per target path for "all targets 404" detection.
-  const pathAttempted = new Map<string, boolean>();
-  let all404 = false;
+  // Last observed HTTP status per path (connection errors are not recorded).
+  const lastStatusByPath = new Map<string, number>();
+  let lastStatusPath: string | null = null;
   let lastStatus = 0;
   let lastBodySnippet = '';
 
@@ -536,21 +579,27 @@ export async function runVerification(
   while (Date.now() < healthDeadline) {
     if (isCancelled()) return cancel(['health', 'tests']);
 
-    // Re-check ps before each request; if app has died, bail immediately.
+    // Re-check ps before each request; skip this iteration's re-check if ps failed.
     const midPs = await composePs(ctx);
     if (isCancelled()) return cancel(['health', 'tests']);
-    const midRow = findAppRow(midPs.services, appService);
-    if (midRow && (midRow.state.toLowerCase().includes('exit') || midRow.state.toLowerCase() === 'dead')) {
-      const logsResult = await composeLogs(ctx, appService, 120);
-      const logText = logsResult.ok ? logsResult.run.stdout : '';
-      healthCheck = makeCheck('health', 'FAIL', true, `app exited with code ${midRow.exitCode ?? '?'} while waiting for health`);
-      healthFailure = {
-        checkId: 'health', command: `GET http://127.0.0.1:${hostPort}${healthTargets[0]?.path ?? '/'}`,
-        exitCode: midRow.exitCode, exitCodeSource: 'container', failedService: appService,
-        rawOutputTail: tailLines(logText, 120),
-        truncated: logsResult.run?.stdoutTruncated ?? false,
-      };
-      break healthLoop;
+    if (midPs.ok) {
+      const midRow = findAppRow(midPs.services, appService);
+      const crash = midRow ? isAppCrashState(midRow.state) : null;
+      if (midRow && crash) {
+        const logsResult = await composeLogs(ctx, appService, 120);
+        const logText = logsResult.ok ? logsResult.run.stdout : '';
+        const detail = crash === 'restarting'
+          ? `app is restart-looping (last exit code ${midRow.exitCode ?? '?'})`
+          : `app exited with code ${midRow.exitCode ?? '?'} while waiting for health`;
+        healthCheck = makeCheck('health', 'FAIL', true, detail);
+        healthFailure = {
+          checkId: 'health', command: `GET http://127.0.0.1:${hostPort}${healthTargets[0]?.path ?? '/'}`,
+          exitCode: midRow.exitCode, exitCodeSource: 'container', failedService: appService,
+          rawOutputTail: tailLines(logText, 120),
+          truncated: logsResult.run?.stdoutTruncated ?? false,
+        };
+        break healthLoop;
+      }
     }
 
     for (const target of healthTargets) {
@@ -567,23 +616,17 @@ export async function runVerification(
         const resp = await fetch(url, { signal: fetchSignal });
         status = resp.status;
         lastStatus = status;
+        lastStatusByPath.set(target.path, status);
+        lastStatusPath = target.path;
         // Read up to 500 chars of body for failure context (don't stream large responses).
         const bodyText = await resp.text().catch(() => '');
         bodySnippet = bodyText.slice(0, 500);
         lastBodySnippet = bodySnippet;
-      } catch (err: unknown) {
-        if (isCancelled()) return cancel(['health', 'tests']);
-        const msg = String(err);
-        // Timeout from healthRequest budget or connection refused — retry after interval.
-        if (msg.includes('TimeoutError') || msg.includes('ECONNREFUSED') || msg.includes('fetch failed')) {
-          pathAttempted.set(target.path, true);
-          continue; // try next target in same iteration
-        }
-        // AbortError means the outer signal was aborted.
-        return cancel(['health', 'tests']);
+      } catch {
+        if (signal?.aborted) return cancel(['health', 'tests']);
+        // Timeout / connection error / unknown: retry within the window.
+        continue;
       }
-
-      pathAttempted.set(target.path, true);
 
       if (status === 200) {
         const sourceLabel = target.source === 'declared' ? '(declared)' : '(conventional path)';
@@ -591,38 +634,29 @@ export async function runVerification(
         break healthLoop;
       }
 
-      if (target.source === 'declared') {
-        // Any non-200 from a declared path is an immediate failure.
-        healthCheck = makeCheck('health', 'FAIL', true, `GET ${target.path} -> HTTP ${status}`);
+      // 503: app may still be booting (migrate/startup); retry declared and conventional.
+      if (status === 503) {
         break;
       }
 
-      // Conventional path: 404 means the route doesn't exist — try the next target.
-      if (status === 404) {
+      if (status === 404 && target.source === 'conventional') {
         continue;
       }
 
-      // 503 from a conventional path — app may still be booting; retry after interval.
-      if (status === 503) {
-        break; // break inner for-loop, sleep, then retry all targets
-      }
-
-      // Any other status from a conventional path is a failure.
+      // 404 declared, other 4xx, other 5xx: decisive.
       healthCheck = makeCheck('health', 'FAIL', true, `GET ${target.path} -> HTTP ${status}`);
       break;
     }
 
     if (healthCheck !== null) break healthLoop;
 
-    // Check if all conventional targets have been tried and all returned 404.
+    // Smoke-probe "/" only when every conventional path's last status was 404 (not conn-error/503).
     const conventionalTargets = healthTargets.filter(t => t.source === 'conventional');
     if (
+      healthTargets.every(t => t.source !== 'declared') &&
       conventionalTargets.length > 0 &&
-      conventionalTargets.every(t => pathAttempted.get(t.path)) &&
-      healthTargets.every(t => t.source !== 'declared')
+      conventionalTargets.every(t => lastStatusByPath.get(t.path) === 404)
     ) {
-      // All conventional paths gave 404; do a smoke probe on '/'.
-      all404 = true;
       const rootUrl = `http://127.0.0.1:${hostPort}/`;
       try {
         const fetchSignal = AbortSignal.any([
@@ -631,6 +665,8 @@ export async function runVerification(
         ]);
         const resp = await fetch(rootUrl, { signal: fetchSignal });
         lastStatus = resp.status;
+        lastStatusByPath.set('/', lastStatus);
+        lastStatusPath = '/';
         lastBodySnippet = (await resp.text().catch(() => '')).slice(0, 500);
         if (lastStatus < 500) {
           // Server responds with some non-error status — WARN (no dedicated health path).
@@ -638,20 +674,23 @@ export async function runVerification(
         } else {
           healthCheck = makeCheck('health', 'FAIL', true, `GET / -> HTTP ${lastStatus}`);
         }
-      } catch (err: unknown) {
-        if (isCancelled()) return cancel(['health', 'tests']);
+      } catch {
+        if (signal?.aborted) return cancel(['health', 'tests']);
         // Connection refused or timeout — server is still not up; keep retrying.
       }
       if (healthCheck !== null) break healthLoop;
-      all404 = false; // reset to retry next round
     }
 
     await new Promise<void>(r => setTimeout(r, VERIFY_TIMEOUTS_MS.pollInterval));
   }
 
   if (healthCheck === null) {
-    // Polling window expired with no successful response.
-    healthCheck = makeCheck('health', 'FAIL', true, `No HTTP response on port ${hostPort} within ${VERIFY_TIMEOUTS_MS.health / 1000}s`);
+    if (lastStatusPath !== null) {
+      const st = lastStatusByPath.get(lastStatusPath) ?? lastStatus;
+      healthCheck = makeCheck('health', 'FAIL', true, `GET ${lastStatusPath} -> HTTP ${st} for ${VERIFY_TIMEOUTS_MS.health / 1000}s`);
+    } else {
+      healthCheck = makeCheck('health', 'FAIL', true, `No HTTP response on port ${hostPort} within ${VERIFY_TIMEOUTS_MS.health / 1000}s`);
+    }
     const logsResult = await composeLogs(ctx, appService, 120);
     const logText = logsResult.ok ? logsResult.run.stdout : '';
     const rawOutputTail = `Last status: ${lastStatus || 'none'}\nBody: ${lastBodySnippet}\n${tailLines(logText, 120)}`;
@@ -675,8 +714,6 @@ export async function runVerification(
       truncated: logsResult.run?.stdoutTruncated ?? false,
     };
   }
-
-  void all404; // used only for flow control above
 
   checks.push(healthCheck);
   if (healthCheck.status === 'FAIL') {

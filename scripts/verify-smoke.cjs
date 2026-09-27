@@ -126,7 +126,7 @@ function printCheck(c) {
     console.log(`  failedService: ${f.failedService ?? '(none)'}`);
     console.log(`  truncated:     ${f.truncated}`);
     // Print at most 20 lines of rawOutputTail — never print full logs here.
-    const tailLines = f.rawOutputTail.split('\n').slice(0, 20);
+    const tailLines = f.rawOutputTail.split('\n').slice(-20);
     if (tailLines.length > 0 && f.rawOutputTail.trim()) {
       console.log('  rawOutputTail (≤20 lines):');
       for (const line of tailLines) console.log('    ' + line);
